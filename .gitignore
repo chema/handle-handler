@@ -1,3 +1,9 @@
+handlerd
+addhandle
+
+# Databases
+*.db
+
 # Prerequisites
 *.d
 
