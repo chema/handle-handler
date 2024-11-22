@@ -1,30 +1,23 @@
 # Compiler and flags
 CC = gcc
-CFLAGS = -Wall -Wextra -O2
-LIB_HTTPD = -lmicrohttpd
-LIB_DB = -lsqlite3
+CFLAGS = -Wall -Wextra -O2 -pedantic
+LIBS = -lmicrohttpd -lsqlite3
 
 # Targets
-TARGETS = handlerd addhandle
+TARGETS = handlerd
 
 # Source files
-SRCS_HANDLERD = handlerd.c
-SRCS_ADDHANDLE = addhandle.c
+SRCS = main.c
 
 # Object files
-OBJS_HANDLERD = $(SRCS_HANDLERD:.c=.o)
-OBJS_ADDHANDLE = $(SRCS_ADDHANDLE:.c=.o)
+OBJS = $(SRCS:.c=.o)
 
 # Default target
 all: $(TARGETS)
 
 # Build handlerd
-handlerd: $(OBJS_HANDLERD)
-	$(CC) $(CFLAGS) -o $@ $^ $(LIB_HTTPD) $(LIB_DB)
-
-# Build addhandle
-addhandle: $(OBJS_ADDHANDLE)
-	$(CC) $(CFLAGS) -o $@ $^ $(LIB_DB)
+handlerd: $(OBJS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
 
 # Compile .c files into .o files
 %.o: %.c
@@ -32,6 +25,6 @@ addhandle: $(OBJS_ADDHANDLE)
 
 # Clean up build artifacts
 clean:
-	rm -f $(OBJS_HANDLERD) $(OBJS_ADDHANDLE) $(TARGETS)
+	rm -f $(OBJS) $(TARGETS)
 
 .PHONY: all clean
