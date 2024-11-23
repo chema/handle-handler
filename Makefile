@@ -3,6 +3,14 @@ CC = gcc
 CFLAGS = -Wall -Wextra -O2 -pedantic
 LIBS = -lmicrohttpd -lsqlite3
 
+# Check if static linking is enabled (use make STATIC=1 to make it static)
+# DO NOT USE YET, BROKEN!
+ifeq ($(STATIC), 1)
+    LDFLAGS = -static
+else
+    LDFLAGS = 
+endif
+
 # Targets
 TARGETS = handlerd
 
@@ -17,7 +25,7 @@ all: $(TARGETS)
 
 # Build handlerd
 handlerd: $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LIBS)
 
 # Compile .c files into .o files
 %.o: %.c

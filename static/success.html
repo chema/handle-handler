@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Success</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f9;
+            color: #333;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .container {
+            text-align: center;
+            padding: 20px;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            width: 80%;
+            max-width: 600px;
+        }
+        h1 {
+            color: #5bc0de;
+        }
+        .message {
+            margin-top: 20px;
+            font-size: 1.1em;
+            color: #555;
+        }
+        .token, .codes {
+            margin-top: 20px;
+            background-color: #e9ecef;
+            padding: 15px;
+            border-radius: 5px;
+            font-size: 1.2em;
+            color: #343a40;
+            font-weight: bold;
+        }
+        .codes {
+            margin-top: 10px;
+        }
+        .code {
+            display: inline-block;
+            margin: 5px;
+            padding: 5px 10px;
+            background-color: #007bff;
+            color: #fff;
+            border-radius: 3px;
+        }
+        a {
+            color: #007bff;
+            text-decoration: none;
+            margin-top: 20px;
+            display: inline-block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Success!</h1>
+        <p class="message">
+            Congratulations! This subdomain is now associated with your Bluesky account.
+        </p>
+        
+        <div class="token">
+            <h3>Your Security Token:</h3>
+            <p>{{ TOKEN }}</p>
+            <p><i>Please save this token as you will need it to dissociate your Bluesky account from this subdomain.</i></p>
+        </div>
+
+        <div class="codes">
+            <h3>Your Invitation Codes:</h3>
+            <ul>
+				<li class="code">{{ INVITATION_CODE1 }}</li>
+				<li class="code">{{ INVITATION_CODE2 }}</li>
+				<li class="code">{{ INVITATION_CODE3 }}</li>
+				<li class="code">{{ INVITATION_CODE4 }}</li>
+				<li class="code">{{ INVITATION_CODE5 }}</li>
+            </ul>
+        </div>
+        <a href="https://bsky.app/profile/baysky.social/feed/aaac5vicl4pww" style="margin-top: 30px;">#Baysky Feed on bsky.app</a>
+    </div>
+</body>
+</html>

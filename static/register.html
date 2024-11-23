@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Handlerd: Manage Subdomain Handles for AT Protocol/Bluesky</title>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            background-color: #f4f7f6;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: #333;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 500px;
+            text-align: center;
+        }
+        h1 {
+            font-size: 1.8rem;
+            margin-bottom: 20px;
+            color: #2b3d4f;
+        }
+        p {
+            font-size: 1rem;
+            color: #666;
+            margin-bottom: 20px;
+        }
+        a {
+            color: #0077cc;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+        form input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            margin-bottom: 15px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            box-sizing: border-box;
+        }
+        form input[type="submit"] {
+            background-color: #0077cc;
+            color: white;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 5px;
+            font-size: 1.1rem;
+            cursor: pointer;
+            width: 100%;
+        }
+        form input[type="submit"]:hover {
+            background-color: #005fa3;
+        }
+        .footer {
+            font-size: 0.9rem;
+            color: #888;
+            margin-top: 20px;
+        }
+        .footer i {
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>BlueSky Handle Registration</h1>
+        <p>This baysky.social subdomain is available for use as a handle on Bluesky. Enter your Bluesky DID below if want to use it as your handle over there.</p>
+        <form action="/result" method="post">
+            <input name="did" type="text" placeholder="Enter your Bluesky DID without the 'did='" required>
+            <input name="email" type="text" placeholder="Email (optional, but useful to keep up to date with baysky.social community)">
+            <input type="submit" value="Register">
+        </form>
+        <p>Questions? Message me in the fedi at <a href="https://ctrvx.net/chema" target="_blank">@chema@ctrvx.net</a>.</p>
+        <p>Check out the <a href="https://bsky.app/profile/did:plc:7wm5b6dzk54ukznrxdlpp23f/feed/aaac5vicl4pww" target="_blank">Baysky Feed</a> and feel free to <a href="https://ko-fi.com/chemahg" target="_blank">get me a coffee</a>.</p>
+        <p class="footer"><i>Terms: This free service is provided at my sole discretion and availability and may be modified, suspended, or discontinued at any time without prior notice (but it probably will not). Only for personal use. If you want to use it for your business, ask me first. Handles and DIDs are always public.</i></p>
+		<p class="footer"><a href="https://github.com/chema/handle-handler" target="_blank">Source code available here.</a></p>
+		
+    </div>
+</body>
+</html>
