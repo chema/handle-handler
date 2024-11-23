@@ -30,8 +30,7 @@ Once you have the wildcard certificates, edit the sample `default-ssl-nginx` con
 
 ## TO DO
 
-* Update DID syntax to the DID PLC spec from https://web.plc.directory/spec/v0.1/did-plc
-* Allow only handle per DID PLC.
+* Allow only handle per DID PLC. (Sort of done)
 * Consider removing need for the extra header from reverse proxy.
 * Add 15 minute cool down period between changes.
 * Verify locked status of handle.
@@ -39,7 +38,6 @@ Once you have the wildcard certificates, edit the sample `default-ssl-nginx` con
 * Implement stronger handle review.
 * Clean up debug code and comments.
 * Add stronger concurrent connection handling.
-* Compile regex code once.
 * Add Podman container language.
 * Write man pages.
 * Add external config.
