@@ -36,6 +36,7 @@
 #define TOKEN_LENGTH 12
 
 #define DEBUG_FLAG 1
+#define VERBOSE_FLAG 1
 
 #define TRUE 1
 #define FALSE 0
@@ -46,6 +47,9 @@
 
 #define KEY_VALID 0
 #define KEY_INVALID 1
+
+#define DATABASE_SUCCESS 0
+#define DATABASE_ERROR 1
 
 // NOT USED YET
 enum lockedStatus

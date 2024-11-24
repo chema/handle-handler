@@ -17,14 +17,19 @@
 
 #include "handlerd.h"
 
+// ***************************************************************************
+// BEGIN GLOBAL VARS *********************************************************
+// ***************************************************************************
+
+// GLOBAL DATABASE DETAILS
 const char *domainName = NULL;
 char databaseFileName[256];
 
-// GLOBAL REGEX
+// GLOBAL COMPILED REGEX
 regex_t regexDid;
 regex_t regexHandle;
 
-// Types of connections accepted.
+// TYPES OF CONNECTIONS ACCEPTED.
 enum connectionType
 {
   GET = 0,
@@ -35,25 +40,29 @@ struct connectionInfoStruct
 {
 	enum connectionType connectiontype; // NOT USED YET
 	
-	// Handle to the POST processing state.
+	// HANDLE TO THE POST PROCESSING STATE.
 	struct MHD_PostProcessor *postprocessor;
 	
-	// DID records we need to keep track of, consider making it a struct
+	// USER RECORDS WE NEED TO TRACK, CONSIDER MAKING IT A STRUCT
 	const char *did;
 	const char *handle;
 	const char *token;
 	const char *email;
 	const unsigned int *locked;
 	
-	// HTTP response body we will return, NULL if not yet known.
+	// HTTP RESPONSE BODY WE WILL RETURN, NULL IF NOT YET KNOWN.
 	const char *answerstring;
 
-	// HTTP status code we will return, 0 for undecided.
+	// HTTP STATUS CODE WE WILL RETURN, 0 FOR UNDECIDED.
 	unsigned int answercode;
 };
 
 
-// REPLACE THE HARD CODED DOMAIN NAME
+// ***************************************************************************
+// BEGIN HARD CODED HTML CODE ************************************************
+// ***************************************************************************
+
+// TO DO: REPLACE HARD CODED DOMAIN NAME
 const char *landingPage =
 "<html><body>\
 <p>This subdomain is available as a handle. Enter your Bluesky DID if you want it associated with it.</p>\
@@ -71,12 +80,17 @@ const char *confirmationPage = "<html><body><p>The subdomain has been succesfull
 // TO DO: Pass on error message details
 const char *errorPage = "<html><body>Error: Request failed.</body></html>";
 
-// DID received is not valid
+// DID RECEIVED IS NOT VALID
 const char *invalidDidPage = "<html><body>DID entered is not valid. Remove the 'did=' at the beginning?</body></html>";
 
-// Handled received is not valid
+// HANDLE RECEIVED IS NOT VALID
 const char *invalidHandlePage = "<html><body>Handle requested is not valid.</body></html>";
 const char *invalidHandlePage2 = "<html><body>Error: Requested page is not available.</body></html>";
+
+
+// ***************************************************************************
+// BEGIN "SECURITY" **********************************************************
+// ***************************************************************************
 
 void generateSecureToken(char *token) {
     const char charset[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -102,9 +116,42 @@ void generateSecureToken(char *token) {
     token[TOKEN_LENGTH] = '\0'; // Null-terminate the token
 }
 
-// BEGIN REGEX ******************************************
+// ***************************************************************************
+// BEGIN FILE READING ********************************************************
+// ***************************************************************************
+	
+// Function to read the contents of the HTML file
+char *readFile (const char *filePath) {
+		FILE *file = fopen(filePath, "r");
+		if (!file) {
+			perror("Failed to open file");
+			return NULL;
+		}
 
-// Helper function to handle regex compilation errors
+		fseek(file, 0, SEEK_END);
+		long fileSize = ftell(file);
+		rewind(file);
+
+		char *buffer = malloc(fileSize + 1);
+		if (!buffer) {
+			perror("Failed to allocate memory");
+			fclose(file);
+			return NULL;
+		}
+
+		fread(buffer, 1, fileSize, file);
+		buffer[fileSize] = '\0'; // Null-terminate the string/file
+
+		fclose(file);
+
+		return buffer;
+	}
+
+// ***************************************************************************
+// BEGIN REGEX AND VALIDATORS ************************************************
+// ***************************************************************************
+
+// HELPER FUNCTION TO HANDLE REGEX COMPILATION ERRORS
 int handleRegexError(int ret, regex_t *regex, const char *patternName) {
     size_t errorBufferSize = regerror(ret, regex, NULL, 0); // Get required buffer size
     char *errorMessage = malloc(errorBufferSize);  // Dynamically allocate memory
@@ -120,7 +167,7 @@ int handleRegexError(int ret, regex_t *regex, const char *patternName) {
     return 1;
 }
 
-// Function to compile the principal regex
+// FUNCTION TO COMPILE THE PRINCIPAL REGEXES
 int compileGlobalRegex( ) {
     int ret;
 
@@ -135,17 +182,13 @@ int compileGlobalRegex( ) {
     return 0;  // Success
 }
 
-// Function to free the compiled regex (called when program is finished)
+// FUNCTION TO FREE THE COMPILED REGEX (CALLED WHEN PROGRAM EXITS)
 void freeGlobalRegex() {
     regfree(&regexDid);   // Free DID regex
     regfree(&regexHandle); // Free handle regex
 }
 
-// END REGEX ******************************************
-
-
-// BEGIN VALIDATION  ******************************************
-
+// VALIDATOR FOR IDENTIFIER
 int validateDid(const char *did) {  // RETURNS KEY_VALID = 0 for successful validation
 	if (did == NULL) return KEY_INVALID;
 	
@@ -156,6 +199,7 @@ int validateDid(const char *did) {  // RETURNS KEY_VALID = 0 for successful vali
     return KEY_VALID;
 }
 
+// VALIDATOR FOR HANDLE
 int validateHandle(const char *did) {  // RETURNS KEY_VALID = 0 for successful validation
 	if (did == NULL) return KEY_INVALID;
 	
@@ -166,31 +210,71 @@ int validateHandle(const char *did) {  // RETURNS KEY_VALID = 0 for successful v
     return KEY_VALID;
 }
 
-// END VALIDATION  ******************************************
-
-// BEGIN FILE READING  ******************************************
+// END REGEX AND VALIDATORS  ******************************************
 
 
+// ***************************************************************************
+// BEGIN GENERIC DATABASE FUNCTIONS ******************************************
+// ***************************************************************************
 
-
-// END FILE READING  ******************************************
-
-
-// Open the database in databaseFileName
- sqlite3 *openDatabase(void) {
+// OPEN THE DATABASE IN databaseFileName
+sqlite3 *openDatabase(void) {
     sqlite3 *db = NULL;
 	
     if (sqlite3_open(databaseFileName, &db) != SQLITE_OK) {
         fprintf(stderr, "Failed to open database '%s': %s\n", databaseFileName, sqlite3_errmsg(db));
-        sqlite3_close(db); // Ensure cleanup in case of partial initialization
+        if (db) sqlite3_close(db); // Ensure cleanup in case of partial initialization
         return NULL;
     }
 	
     return db;
 }
 
+// INITIALIZE DATABASE, RETURNS DATABASE_SUCCESS 0 IF SUCESSFUL, DATABASE_ERROR 1 IF IT FAILED.
+int initializeDatabase( ) {
+	char *err_msg = 0;
+    int rc;
+	
+    sqlite3 *db = openDatabase();
+    if (!db) {
+        return DATABASE_ERROR;
+    }
+    
+	#ifdef VERBOSE_FLAG
+	printf("Database '%s' created/opened successfully.\n", databaseFileName);
+	#endif
 
-// Prepare the SQL statement
+	// SQL COMMENTARY: ADDITIONAL INDEXING IS UNNECESSARY SINCE 'did' COLUMN IS UNIQUE
+	// VIEW THE INDEX LIST USING: PRAGMA index_list(userTable);
+	
+    char *sqlCreateTable = "CREATE TABLE IF NOT EXISTS userTable ("
+                "handle TEXT PRIMARY KEY, "
+				"did TEXT NOT NULL UNIQUE, "
+                "token TEXT NOT NULL, "
+				"email TEXT, "
+				"locked BOOLEAN DEFAULT 0, "
+				"notes TEXT,"
+				"creation_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP);";
+
+    rc = sqlite3_exec(db, sqlCreateTable, 0, 0, &err_msg);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "Table creation failed: %s\n", err_msg);
+        sqlite3_close(db);
+        return DATABASE_ERROR;
+    }
+
+	#ifdef VERBOSE_FLAG
+	printf("Table created successfully (or already existed).\n");
+	#endif
+
+    // CLOSE THE DATABASE
+	sqlite3_free(err_msg);
+    sqlite3_close(db);
+
+	return DATABASE_SUCCESS;
+}
+
+// PREPARE A SQL STATEMENT
 sqlite3_stmt *prepareSQLStatement (sqlite3 *db, const char *sql) {
 	sqlite3_stmt *stmt;
 	
@@ -204,7 +288,7 @@ sqlite3_stmt *prepareSQLStatement (sqlite3 *db, const char *sql) {
 	return stmt;
 }
 
-// Bind Key to Statement
+// BIND KEY TO STATEMENT
 int bindKeyToSQLStatement(sqlite3_stmt *stmt, int index, const char *key, sqlite3 *db) {
     if (sqlite3_bind_text(stmt, index, key, -1, SQLITE_STATIC) != SQLITE_OK) {
         fprintf(stderr, "SQL Binding error for key %s: %s\n", key, sqlite3_errmsg(db));
@@ -213,7 +297,9 @@ int bindKeyToSQLStatement(sqlite3_stmt *stmt, int index, const char *key, sqlite
     return SQLITE_OK; // Success
 }
 
-
+// ***************************************************************************
+// BEGIN HANDLERD SPECIFIC DATABASE FUNCTIONS ********************************
+// ***************************************************************************
 
 // Try adding a new report. Returns TRUE if successful, returns FALSE if failed. Maybe a pointer to an error msg?
 int addNewRecord (const char *handle, const char *did, const char *token, const char *email) {
@@ -226,14 +312,13 @@ int addNewRecord (const char *handle, const char *did, const char *token, const 
     sqlite3 *db = openDatabase();
 	if (!db) return FALSE;
 
-	// ADD VALIDATION??
+	// ADD VALIDATION
 	
     // Insert data, making everything lowercase except the token
 	snprintf(insertUserRecordSql, sizeof(insertUserRecordSql),
          "INSERT OR IGNORE INTO userTable (handle, did, token, email) "
          "VALUES (LOWER('%s'), LOWER('%s'), '%s', LOWER('%s'));",
          handle, did, token, email);
-		 
 		 
     rc = sqlite3_exec(db, insertUserRecordSql, 0, 0, &err_msg);
     if (rc != SQLITE_OK) {
@@ -249,7 +334,7 @@ int addNewRecord (const char *handle, const char *did, const char *token, const 
 	return TRUE;
 }
 
-// Query database for existance of specific 'handle'
+// QUERY DATABASE FOR EXISTANCE OF SPECIFIC 'handle'
 int handleRegistered (const char *handle) {
 	const char *sql = "SELECT 1 FROM userTable WHERE handle = ? LIMIT 1;";
 
@@ -287,8 +372,7 @@ int handleRegistered (const char *handle) {
 	}
 }
 
-
-// Query database for a valid DID associated with handle
+// QUERY DATABASE FOR A VALID IDENTIFIER ASSOCIATED WITH HANDLE
 const char* queryForDid (const char *handle) {
     const char *sql = "SELECT did FROM userTable WHERE handle = ?";
 	static char result [MAX_SIZE_DID_PLC + 1];	// Static buffer to hold the DID + 1 for the null terminator
@@ -342,6 +426,10 @@ const char* queryForDid (const char *handle) {
 }
 
 
+// ************************************
+// ********* SERVER FUNCTIONS *********
+// ************************************
+
 // Send Response with Specific Content-Type Header
 static enum MHD_Result sendResponse (struct MHD_Connection *connection, const char *content, const char *contentType)
 {
@@ -363,37 +451,7 @@ static enum MHD_Result sendResponse (struct MHD_Connection *connection, const ch
 	return ret;
 }
 
-// *************** FILE READING ***********
-	
-// Function to read the contents of the HTML file
-char *readFile (const char *filePath) {
-		FILE *file = fopen(filePath, "r");
-		if (!file) {
-			perror("Failed to open file");
-			return NULL;
-		}
-
-		fseek(file, 0, SEEK_END);
-		long fileSize = ftell(file);
-		rewind(file);
-
-		char *buffer = malloc(fileSize + 1);
-		if (!buffer) {
-			perror("Failed to allocate memory");
-			fclose(file);
-			return NULL;
-		}
-
-		fread(buffer, 1, fileSize, file);
-		buffer[fileSize] = '\0'; // Null-terminate the string/file
-
-		fclose(file);
-
-		return buffer;
-	}
-
-
-// Send File with Specific Content-Type Header
+// SEND FILE WITH SPECIFIC CONTENT-TYPE HEADER (HTML, PLAIN TEXT, CSV, JSON, ETC)
 static enum MHD_Result sendFileResponse (struct MHD_Connection *connection, const char *filename, const char *contentType)
 {
 	enum MHD_Result ret;
@@ -422,10 +480,7 @@ static enum MHD_Result sendFileResponse (struct MHD_Connection *connection, cons
 	return ret;
 }
 
-
-
-
-
+// POST REQUEST MANAGER
 static enum MHD_Result iteratePost	(void *coninfo_cls, enum MHD_ValueKind kind, const char *key,
 										const char *filename, const char *content_type,
 										const char *transfer_encoding, const char *data, uint64_t off,
@@ -493,18 +548,7 @@ static enum MHD_Result iteratePost	(void *coninfo_cls, enum MHD_ValueKind kind, 
   return MHD_YES;
 }
 
-
-
-
-
-
-
-
-
-
-
-
-// Clean-up function after request completed
+// CLEAN-UP FUNCTION AFTER REQUEST COMPLETED
 static void requestCompleted (void *cls, struct MHD_Connection *connection, void **con_cls, enum MHD_RequestTerminationCode toe)
 {
   struct connectionInfoStruct *con_info = *con_cls;
@@ -527,36 +571,36 @@ static void requestCompleted (void *cls, struct MHD_Connection *connection, void
 }
 
 // MAIN SERVER REQUEST HANDLER
-
 static enum MHD_Result requestHandler	   (void *cls, struct MHD_Connection *connection,
 												const char *url, const char *method,
 												const char *version, const char *upload_data,
 												size_t *upload_data_size, void **con_cls)
 {
 	(void) cls;               /* Unused. Silent compiler warning. */
-	(void) url;               /* Unused. Silent compiler warning. */
 	(void) version;           /* Unused. Silent compiler warning. */
 	
 	// Get the 'Host' and 'X-ATPROTO-HANDLE' header values from GET connection
     const char *hostHeader = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Host");
 	const char *handleHeader = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "X-ATPROTO-HANDLE");
 	// ADD SANITY CHECK FOR THE HOST HEADER
+	// 0 == strcmp (method, MHD_HTTP_METHOD_POST)
 
 	if (DEBUG_FLAG) printf("DEBUG: hostHeader=%s, handleHeader=%s, url=%s\n", hostHeader, handleHeader, url);
 
 	// Confirm that the host header includes the domain name, otherwise skip directly to error.
 	if ( ( (strstr (hostHeader, domainName)) != NULL) || DEBUG_FLAG) {
 
-		if (NULL == *con_cls) { // First call, setup data structures
+		if (NULL == *con_cls) { // FIRST CALL, SETUP DATA STRUCTURES, SOME SHOULD ONLY APPLY TO 'POST' REQUESTS
 			struct connectionInfoStruct *con_info;
 
 			con_info = malloc (sizeof (struct connectionInfoStruct));
 			if (NULL == con_info) {
 				fprintf(stderr, "Error: Memory allocation failed for connection information.\n");
-				return MHD_NO;	// Malloc failed
+				return MHD_NO;	// INTERNAL ERROR
 			}
 
-			// Initialize the DID recordt struct
+			// INITIALIZE THE USER RECORD STRUCT  SOME SHOULD ONLY APPLY TO 'POST' REQUESTS   if (0 == strcmp (method, MHD_HTTP_METHOD_POST))
+
 			con_info->did = NULL;
 			if (handleHeader) con_info->handle = handleHeader;
 			else con_info->handle = NULL;
@@ -564,18 +608,18 @@ static enum MHD_Result requestHandler	   (void *cls, struct MHD_Connection *conn
 			con_info->email = NULL;
 			con_info->locked = NULL;
 
-			// Initialize answer variables
+			// INITIALIZE ANSWER VARIABLES
 			con_info->answerstring = NULL;			// Make sure answer string is empty
 			con_info->answercode = 0;				// Make sure answercode string is empty
 
-			//if (0 == strcasecmp (method, MHD_HTTP_METHOD_POST)) {
-			if (0 == strcmp (method, "POST")) {
+			if ( 0 == strcasecmp (method, MHD_HTTP_METHOD_POST) ) {
 				con_info->postprocessor = MHD_create_post_processor (connection, POSTBUFFERSIZE, iteratePost, (void *) con_info);
 
 				// Creating postprocessor failed, free memory manually and exit.
 				if (NULL == con_info->postprocessor) {
 					free (con_info);
-					return MHD_NO;
+					fprintf(stderr, "ERROR: Creating postprocessor failed.\n");
+					return MHD_NO; // INTERNAL ERROR
 				}
 				
 				// Setting connection type in structure
@@ -636,7 +680,10 @@ static enum MHD_Result requestHandler	   (void *cls, struct MHD_Connection *conn
 	return sendResponse (connection, errorPage, HTML_CONTENT);
 }
 
-// MAIN FUNCTION: TRACK ARGS, PREP GLOBALS AND CALL DEAMON
+// *********************************
+// ********* MAIN FUNCTION *********
+// *********************************
+
 int main(int argc, char *argv[])
 {
 	if (argc < 2) {
@@ -646,12 +693,12 @@ int main(int argc, char *argv[])
 	
 	// PREP GLOBAL VARIABLES
     domainName = argv[1];
-	
-    // Create database name by appending "-domain" to the provided domain name
     snprintf(databaseFileName, sizeof(databaseFileName), "%s.users.db", domainName);
 	
-	printf("Domain Name: %s\n", domainName);
-	printf("Database Filename: %s\n", databaseFileName);
+	if (DEBUG_FLAG) {
+		printf("Domain Name: %s\n", domainName);
+		printf("Database Filename: %s\n", databaseFileName);
+	}
 	
 	// COMPILE GLOBAL REGEX	
     if (compileGlobalRegex() != 0) {
@@ -659,49 +706,21 @@ int main(int argc, char *argv[])
         return 1;
     }
 	
-	// START CONFIRM DATABASE, MOVE TO A FUNCTION
+	// INITIALIZE THE DATABASE, RETURNS DATABASE_SUCCESS 0 IF SUCESSFUL, DATABASE_ERROR 1 IF IT FAILED.
+    int rc;	
+	rc = initializeDatabase ();
 	
-	char *err_msg = 0;
-    int rc;
-	
-	sqlite3 *db = openDatabase();
-	if (!db) return 0;
-	else printf("Database '%s' created/opened successfully.\n", databaseFileName);
-
-    char *sqlCreateTable = "CREATE TABLE IF NOT EXISTS userTable ("
-                "handle TEXT PRIMARY KEY, "
-				"did TEXT NOT NULL, "
-                "token TEXT NOT NULL, "
-				"email TEXT, "
-				"locked BOOLEAN DEFAULT 0, "
-				"notes TEXT,"
-				"creation_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP);";
-
-    rc = sqlite3_exec(db, sqlCreateTable, 0, 0, &err_msg);
-    if (rc != SQLITE_OK) {
-        fprintf(stderr, "Table creation failed: %s\n", err_msg);
-        sqlite3_free(err_msg);
-        sqlite3_close(db);
+    if (rc != DATABASE_SUCCESS ) {
+        fprintf(stderr, "General database failure.\n");
         return 1;
-    } else printf("Table created successfully (or already existed).\n");
+    }
+	
+	printf("Database '%s' active.\n", databaseFileName);
+	
 
-	char *sqlCreateHandleIndex = "CREATE INDEX IF NOT EXISTS idx_did ON userTable(did);";
-
-    rc = sqlite3_exec(db, sqlCreateHandleIndex, 0, 0, &err_msg);
-    if (rc != SQLITE_OK) {
-        fprintf(stderr, "Handle index creation failed: %s\n", err_msg);
-        sqlite3_free(err_msg);
-        sqlite3_close(db);
-        return 1;
-    } else printf("Handle index created successfully (or already existed).\n");
-	
-	
-	// END CONFIRM DATABASE
-	
-	
+    // START THE HTTP DAEMON
 	struct MHD_Daemon *daemon;
 
-    // Start the HTTP daemon
 	daemon = MHD_start_daemon (MHD_USE_AUTO | MHD_USE_INTERNAL_POLLING_THREAD, PORT,
                              NULL, NULL,  // No client connect/disconnect callbacks
                              &requestHandler, NULL,  // Request handler
@@ -709,19 +728,25 @@ int main(int argc, char *argv[])
                              NULL, MHD_OPTION_END);
 
 	if (NULL == daemon) {
-        fprintf(stderr, "Failed to start handler daemon\n");
+        fprintf(stderr, "Failed to start Handler daemon.\n");
         return 1;
     }
 
-    printf("Handler Daemon running on port %d...\n", PORT);
+    printf("Handler Daemon running on port %d. Type 'q' and press Enter to quit.\n", PORT);
+    char input;
 
-    // Keep running until the user presses Enter
-	(void) getchar ();
+    while (1) { // INFINITE LOOP
+        input = getchar();  // Get user input
+        if (input == 'q') { // Check if input is 'q'
+            printf("Exiting Handler daemon...\n");
+            break; // Exit the loop
+        }
+    }
 
-    // Stop the server
+    // STOP HTTP DAEMON
 	MHD_stop_daemon (daemon);
 
-    // Free the compiled regex before exiting
+    // FREE COMPILED REGEXES BEFORE EXITING
     freeGlobalRegex();
 
 	return 0;
