@@ -38,9 +38,9 @@
     <div class="container">
         <h1>Error Occurred</h1>
         <p class="message">
-            An unknown error has occurred. Please try again later.
+            {{ ERROR }}
         </p>
-        <a href="{{ .Site.BaseURL }}" style="color: #007bff; text-decoration: none;">Go back to homepage</a>
+        <a href="javascript:history.back()" style="color: #007bff; text-decoration: none;">Go back</a>
     </div>
 </body>
 </html>

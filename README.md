@@ -30,7 +30,6 @@ Once you have the wildcard certificates, edit the sample `default-ssl-nginx` con
 
 ## TO DO
 
-* Allow only handle per DID PLC. (Sort of done)
 * Add automatic forwarding from active handles.
 * Consider removing need for the extra header from reverse proxy.
 * Add 15 minute cool down period between changes.

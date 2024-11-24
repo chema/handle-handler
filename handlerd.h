@@ -6,7 +6,7 @@
 #include <microhttpd.h>
 
 #define PORT            8123
-#define POSTBUFFERSIZE  1024
+#define POSTBUFFERSIZE  2048
 
 #define TARGET_URL 			"/.well-known/atproto-did"
 #define MAXDIDSIZE			256   // Implied desired max from https://atproto.com/specs/did
@@ -20,7 +20,12 @@
 // DID PLC pattern based on https://web.plc.directory/spec/v0.1/did-plc (exactly 32 characters, "did:plc:" prefix+24 base 32 encoding set characters)
 #define VALID_PATTERN_DID_PLC		"^did:plc:[a-zA-Z2-7]{24}$"
 // Handle pattern based on regex from https://atproto.com/specs/handle, but for only one segment 
+// NOT ACTUALLY A HANDLE, SINCE IT EXCLUDES THE DOMAIN NAME, THIS IS A "SEGMENT" OR "A LABEL"
 #define VALID_PATTERN_HANDLE		"^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)$"
+#define VALID_PATTERN_LABEL			"^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)$"
+// FULL Handle pattern (including the domain name) based on regex from https://atproto.com/specs/handle. Added a second \.
+#define VALID_PATTERN_FULL_HANDLE	"^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$"
+
 
 // #define GET             0
 // #define POST            1
@@ -32,11 +37,7 @@
 #define STATIC_SUCCESS		"static/success.html"
 #define STATIC_ACTIVE		"static/active.html"
 
-
 #define TOKEN_LENGTH 12
-
-#define DEBUG_FLAG 1
-#define VERBOSE_FLAG 1
 
 #define TRUE 1
 #define FALSE 0

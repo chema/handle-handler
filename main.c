@@ -17,6 +17,10 @@
 
 #include "handlerd.h"
 
+#define DEBUG_FLAG 1
+#define VERBOSE_FLAG
+#define NGINX_FLAG
+
 // ***************************************************************************
 // BEGIN GLOBAL VARS *********************************************************
 // ***************************************************************************
@@ -28,6 +32,8 @@ char databaseFileName[256];
 // GLOBAL COMPILED REGEX
 regex_t regexDid;
 regex_t regexHandle;
+regex_t regexLabel;
+regex_t regexFullHandle;
 
 // TYPES OF CONNECTIONS ACCEPTED.
 enum connectionType
@@ -43,11 +49,14 @@ struct connectionInfoStruct
 	// HANDLE TO THE POST PROCESSING STATE.
 	struct MHD_PostProcessor *postprocessor;
 	
-	// USER RECORDS WE NEED TO TRACK, CONSIDER MAKING IT A STRUCT
-	const char *did;
+	// CONNECTION DETAILS WE NEED TO TRACK, CONSIDER MAKING IT A STRUCT
+	const char *host;
 	const char *handle;
-	const char *token;
+	
+	// USER DETAILS WE NEED TO TRACK, CONSIDER REMOVING SOME
+	const char *did;
 	const char *email;
+	const char *token;
 	const unsigned int *locked;
 	
 	// HTTP RESPONSE BODY WE WILL RETURN, NULL IF NOT YET KNOWN.
@@ -147,6 +156,53 @@ char *readFile (const char *filePath) {
 		return buffer;
 	}
 
+/*
+// Helper function to replace placeholder text in a string
+static char *replacePlaceholder(const char *original, const char *placeholder, const char *replacement) {
+    if (!original || !placeholder || !replacement) {
+        return NULL; // Ensure inputs are not null
+    }
+
+    size_t originalLen = strlen(original);
+    size_t placeholderLen = strlen(placeholder);
+    size_t replacementLen = strlen(replacement);
+
+    // Calculate the new size (assuming one placeholder)
+    size_t newSize = originalLen + replacementLen - placeholderLen + 1;
+    char *modified = (char *)malloc(newSize);
+    if (!modified) {
+        return NULL;
+    }
+
+    // Find the placeholder
+    const char *tmp = strstr(original, placeholder);
+    if (!tmp) {
+        // If no placeholder found, copy the original string and return
+        strcpy(modified, original);
+        return modified;
+    }
+
+    // Perform the replacement
+    const char *current = original;
+    char *dest = modified;
+
+    // Copy part before the placeholder
+    size_t lenBefore = tmp - current;
+    memcpy(dest, current, lenBefore); // Use memcpy for raw copy
+    dest += lenBefore;
+
+    // Copy the replacement
+    memcpy(dest, replacement, replacementLen);
+    dest += replacementLen;
+
+    // Copy the remaining part of the original string after the placeholder
+    const char *remaining = tmp + placeholderLen;
+    strcpy(dest, remaining);
+
+    return modified;
+}
+*/
+
 // ***************************************************************************
 // BEGIN REGEX AND VALIDATORS ************************************************
 // ***************************************************************************
@@ -179,6 +235,14 @@ int compileGlobalRegex( ) {
 	ret = regcomp(&regexHandle, VALID_PATTERN_HANDLE, REG_EXTENDED | REG_ICASE );
     if ( ret != 0 ) return handleRegexError(ret, &regexHandle, "Handle");
 	
+	// Compile label regex
+	ret = regcomp(&regexLabel, VALID_PATTERN_LABEL, REG_EXTENDED | REG_ICASE );
+    if ( ret != 0 ) return handleRegexError(ret, &regexLabel, "Label");	
+	
+	// Compile FULL HANDLE regex
+	ret = regcomp(&regexFullHandle, VALID_PATTERN_FULL_HANDLE, REG_EXTENDED | REG_ICASE );
+    if ( ret != 0 ) return handleRegexError(ret, &regexFullHandle, "Full Handle");	
+	
     return 0;  // Success
 }
 
@@ -186,6 +250,8 @@ int compileGlobalRegex( ) {
 void freeGlobalRegex() {
     regfree(&regexDid);   // Free DID regex
     regfree(&regexHandle); // Free handle regex
+    regfree(&regexLabel); // Free label regex
+	regfree(&regexFullHandle); // Free handle regex
 }
 
 // VALIDATOR FOR IDENTIFIER
@@ -209,6 +275,40 @@ int validateHandle(const char *did) {  // RETURNS KEY_VALID = 0 for successful v
 	
     return KEY_VALID;
 }
+
+// VALIDATOR FOR LABEL
+int validateLabel(const char *label) {  // RETURNS KEY_VALID = 0 for successful validation
+	if (label == NULL) return KEY_INVALID;
+	
+    if (regexec(&regexLabel, label, 0, NULL, 0) != 0) {
+		return KEY_INVALID;
+	}
+	
+    return KEY_VALID;
+}
+
+// REMOVE DOMAIN NAME FROM THE HOSTNAME
+const char* removeDomainName (const char *hostName) {
+    // Confirm that the domainName is in the hostName string
+	if ( NULL != strcasestr(hostName, domainName) ) {
+		// Remove one to eliminate the '.' also!
+		size_t labelSize = strlen(hostName) - strlen(domainName) - 1;
+		
+		char *labelSegment = (char *)malloc(labelSize);
+		if (labelSegment == NULL) {
+				// Handle memory allocation failure
+				return NULL;
+		 }  
+		 
+		strncpy(labelSegment, hostName, labelSize);
+		labelSegment[labelSize] = '\0';  // Null-terminate the new string
+
+		return labelSegment;  // Return the new string
+	}
+	// If domainName is not found, return NULL
+	return NULL;
+}
+
 
 // END REGEX AND VALIDATORS  ******************************************
 
@@ -301,37 +401,48 @@ int bindKeyToSQLStatement(sqlite3_stmt *stmt, int index, const char *key, sqlite
 // BEGIN HANDLERD SPECIFIC DATABASE FUNCTIONS ********************************
 // ***************************************************************************
 
-// Try adding a new report. Returns TRUE if successful, returns FALSE if failed. Maybe a pointer to an error msg?
-int addNewRecord (const char *handle, const char *did, const char *token, const char *email) {
-	int rc;
-    char insertUserRecordSql[512];
-    char *err_msg = 0;
-
-	printf("ADD NEW RECORD DATA: handle=%s, did=%s, token=%s, email=%s\n", handle, did, token, email);
-
-    sqlite3 *db = openDatabase();
-	if (!db) return FALSE;
-
-	// ADD VALIDATION
+// TRY ADDING A NEW REPORT. RETURNS TRUE IF SUCCESSFUL, RETURNS FALSE IF FAILED. MAYBE A POINTER TO AN ERROR MSG AND VALIDATION?
+int addNewRecord(const char *handle, const char *did, const char *token, const char *email) {
+    int rc;
 	
-    // Insert data, making everything lowercase except the token
-	snprintf(insertUserRecordSql, sizeof(insertUserRecordSql),
-         "INSERT OR IGNORE INTO userTable (handle, did, token, email) "
-         "VALUES (LOWER('%s'), LOWER('%s'), '%s', LOWER('%s'));",
-         handle, did, token, email);
-		 
-    rc = sqlite3_exec(db, insertUserRecordSql, 0, 0, &err_msg);
-    if (rc != SQLITE_OK) {
-        fprintf(stderr, "New record creation failed: %s\n", err_msg);
-        sqlite3_free(err_msg);
+    sqlite3 *db = openDatabase();
+    if (!db) return FALSE;
+
+    // SQL STATEMENT WITH PLACEHOLDERS FOR THE PARAMETERS
+	// ALL VALUES ARE NORMALIZED TO LOWERCASE EXCEPT FOR TOKEN
+    const char *insertUserRecordSql = 
+        "INSERT INTO userTable (handle, did, token, email) "
+        "VALUES (LOWER(?), LOWER(?), ?, LOWER(?));";
+
+	// PREPARE SQL STATEMENT
+    sqlite3_stmt *stmt = prepareSQLStatement (db, insertUserRecordSql);	
+	if (!stmt) return FALSE;
+
+    // Bind parameters to the prepared statement using bindKeyToSQLStatement
+    if (bindKeyToSQLStatement(stmt, 1, handle, db) != SQLITE_OK || bindKeyToSQLStatement(stmt, 2, did, db) != SQLITE_OK ||
+        bindKeyToSQLStatement(stmt, 3, token, db) != SQLITE_OK || bindKeyToSQLStatement(stmt, 4, email, db) != SQLITE_OK)
+	{
+        sqlite3_finalize(stmt);
         sqlite3_close(db);
         return FALSE;
-    } else printf("New record created succesfully: %s\n", handle);
+    }
 
-	// Close the database
+    // Execute the statement
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_DONE) {
+        fprintf(stderr, "ERROR: New record creation failed (%d): %s\n", rc, sqlite3_errmsg(db));
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        return FALSE;
+    }
+	
+	printf("New record created successfully: %s\n", handle);
+
+    // Finalize the statement and close the database
+    sqlite3_finalize(stmt);
     sqlite3_close(db);
 
-	return TRUE;
+    return TRUE;
 }
 
 // QUERY DATABASE FOR EXISTANCE OF SPECIFIC 'handle'
@@ -419,7 +530,7 @@ const char* queryForDid (const char *handle) {
     sqlite3_finalize(stmt);
     sqlite3_close(db);
 
-	if (DEBUG_FLAG) printf("DEBUG: SUCCESS queryForDid: handle=%s, result (did)=%s\n", handle, result);
+	if (DEBUG_FLAG) printf("DEBUG: End queryForDid: handle=%s, result (did)=%s\n", handle, result);
 
     // Returns result if it's not empty, and NULL if remains empty (i.e., the first character remains '\0')
     return result[0] ? result : NULL;
@@ -431,6 +542,7 @@ const char* queryForDid (const char *handle) {
 // ************************************
 
 // Send Response with Specific Content-Type Header
+// TO DO: ADD A unsigned int status_code OPTION
 static enum MHD_Result sendResponse (struct MHD_Connection *connection, const char *content, const char *contentType)
 {
 	enum MHD_Result ret;
@@ -479,6 +591,46 @@ static enum MHD_Result sendFileResponse (struct MHD_Connection *connection, cons
 
 	return ret;
 }
+/*
+// SEND FILE WITH SPECIFIC ERROR MESSAGE
+static enum MHD_Result sendErrorResponse (struct MHD_Connection *connection, const char *filename, const char *contentType, const char *errorMessage)
+{
+	enum MHD_Result ret;
+	struct MHD_Response *response;
+		
+    char *htmlContent = readFile(filename);
+    if (!htmlContent) {
+        return MHD_NO;
+    }
+
+    // Replace {{ ERROR }} in htmlContent with an error message
+    char *modifiedContent = replacePlaceholder(htmlContent, "{{ ERROR }}", errorMessage);
+    free(htmlContent); // Free the original content
+
+    if (!modifiedContent) {
+        return MHD_NO; // Handle replacement failure
+    }
+
+
+    response = MHD_create_response_from_buffer(strlen(htmlContent), (void *)htmlContent, MHD_RESPMEM_MUST_FREE);
+	if (! response) {
+		free(htmlContent); // Cleanup in case of failure
+		return MHD_NO;
+	}
+
+	// Add content type header to response
+	if (contentType != NULL) MHD_add_response_header(response, "Content-Type", contentType);
+
+	// Queue the response
+	ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
+
+	// Clean up
+	MHD_destroy_response(response);
+
+	return ret;
+}
+*/
+
 
 // POST REQUEST MANAGER
 static enum MHD_Result iteratePost	(void *coninfo_cls, enum MHD_ValueKind kind, const char *key,
@@ -486,6 +638,7 @@ static enum MHD_Result iteratePost	(void *coninfo_cls, enum MHD_ValueKind kind, 
 										const char *transfer_encoding, const char *data, uint64_t off,
 										size_t size)
 {
+  //struct connectionInfoStruct *con_info = coninfo_cls;
   struct connectionInfoStruct *con_info = coninfo_cls;
   (void) kind;               /* Unused. Silent compiler warning. */
   (void) filename;           /* Unused. Silent compiler warning. */
@@ -522,13 +675,14 @@ static enum MHD_Result iteratePost	(void *coninfo_cls, enum MHD_ValueKind kind, 
 			con_info->email = strndup(data, size);
 		}
 		
+		// TOMORROW: MOVE TOKEN CREATION TO addNewRecord
 		char token[TOKEN_LENGTH + 1]; // +1 for the null terminator
 		generateSecureToken(token);
 		con_info->token = strndup(token, TOKEN_LENGTH + 1);
 
 		if (DEBUG_FLAG) printf("ALL DATA RECEIVED: handle=%s, did=%s, token=%s, email=%s\n", con_info->handle, con_info->did, con_info->token, con_info->email);
 
-		addNewRecord (con_info->handle, con_info->did, con_info->token, con_info->email);
+		if ( FALSE == addNewRecord (con_info->handle, con_info->did, con_info->token, con_info->email) ) return MHD_NO;
 		
 		char *answerstring;
 
@@ -551,6 +705,7 @@ static enum MHD_Result iteratePost	(void *coninfo_cls, enum MHD_ValueKind kind, 
 // CLEAN-UP FUNCTION AFTER REQUEST COMPLETED
 static void requestCompleted (void *cls, struct MHD_Connection *connection, void **con_cls, enum MHD_RequestTerminationCode toe)
 {
+  //struct connectionInfoStruct *con_info = *con_cls;
   struct connectionInfoStruct *con_info = *con_cls;
   (void) cls;         /* Unused. Silent compiler warning. */
   (void) connection;  /* Unused. Silent compiler warning. */
@@ -570,94 +725,114 @@ static void requestCompleted (void *cls, struct MHD_Connection *connection, void
 	*con_cls = NULL;
 }
 
-// MAIN SERVER REQUEST HANDLER
+// *********************************************
+// ********* PRINCIPAL REQUEST HANDLER *********
+// *********************************************
+
 static enum MHD_Result requestHandler	   (void *cls, struct MHD_Connection *connection,
 												const char *url, const char *method,
 												const char *version, const char *upload_data,
 												size_t *upload_data_size, void **con_cls)
 {
+	
 	(void) cls;               /* Unused. Silent compiler warning. */
 	(void) version;           /* Unused. Silent compiler warning. */
 	
-	// Get the 'Host' and 'X-ATPROTO-HANDLE' header values from GET connection
-    const char *hostHeader = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Host");
-	const char *handleHeader = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "X-ATPROTO-HANDLE");
-	// ADD SANITY CHECK FOR THE HOST HEADER
-	// 0 == strcmp (method, MHD_HTTP_METHOD_POST)
+	
+	if (NULL == *con_cls) { // FIRST CALL, SETUP DATA STRUCTURES, SOME ONLY APPLY TO 'POST' REQUESTS
+		struct connectionInfoStruct *con_info;
 
-	if (DEBUG_FLAG) printf("DEBUG: hostHeader=%s, handleHeader=%s, url=%s\n", hostHeader, handleHeader, url);
+		con_info = malloc (sizeof (struct connectionInfoStruct));
+		if (NULL == con_info) {
+			fprintf(stderr, "Error: Memory allocation failed for connection information.\n");
+			return MHD_NO;	// INTERNAL ERROR
+		}
 
-	// Confirm that the host header includes the domain name, otherwise skip directly to error.
-	if ( ( (strstr (hostHeader, domainName)) != NULL) || DEBUG_FLAG) {
+		// NEW VARIABLE!!
+		con_info->host = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Host");
+		
+		// GET OR CALCULATE THE 'handle'
+		#ifdef NGINX_FLAG
+		// 'X-ATPROTO-HANDLE' OPTIONAL AND REQUIRES NGINX REVERSE PROXY. DUPLICATIVE.
+		con_info->handle = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "X-ATPROTO-HANDLE");
+		#else
+		// TO DO: CONFIRM NULL STATUS.
+		con_info->handle = removeDomainName( con_info->host );
+		#endif
 
-		if (NULL == *con_cls) { // FIRST CALL, SETUP DATA STRUCTURES, SOME SHOULD ONLY APPLY TO 'POST' REQUESTS
-			struct connectionInfoStruct *con_info;
+		con_info->did = NULL;
+		con_info->email = NULL;
+		con_info->token = NULL;
+		con_info->locked = NULL;
 
-			con_info = malloc (sizeof (struct connectionInfoStruct));
-			if (NULL == con_info) {
-				fprintf(stderr, "Error: Memory allocation failed for connection information.\n");
-				return MHD_NO;	// INTERNAL ERROR
+		// INITIALIZE THE CONNECTIONINFO STRUCT. SOME ONLY APPLY TO 'POST' REQUESTS.
+		if ( 0 == strcasecmp (method, MHD_HTTP_METHOD_POST) ) {
+			con_info->postprocessor = MHD_create_post_processor (connection, POSTBUFFERSIZE, iteratePost, (void *) con_info);
+
+			// Creating postprocessor failed, free memory manually and exit.
+			if (NULL == con_info->postprocessor) {
+				free (con_info);
+				fprintf(stderr, "ERROR: Creating postprocessor failed.\n");
+				return MHD_NO; // INTERNAL ERROR
 			}
+			
+			// Setting connection type in structure
+			con_info->connectiontype = POST;
+			
+		}
+		else { //PROBABLY BEST TO CONFIRM IT IS A GET REQUEST?
+		  con_info->connectiontype = GET;
+		}
 
-			// INITIALIZE THE USER RECORD STRUCT  SOME SHOULD ONLY APPLY TO 'POST' REQUESTS   if (0 == strcmp (method, MHD_HTTP_METHOD_POST))
+		// INITIALIZE ANSWER VARIABLES
+		con_info->answerstring = NULL;			// Make sure answer string is empty
+		con_info->answercode = 0;				// Make sure answercode string is empty
 
-			con_info->did = NULL;
-			if (handleHeader) con_info->handle = handleHeader;
-			else con_info->handle = NULL;
-			con_info->token = NULL;
-			con_info->email = NULL;
-			con_info->locked = NULL;
+		#ifdef DEBUG_FLAG
+		printf("DEBUG 1st CALL: host=%s, handle=%s, url=%s\n", con_info->host, con_info->handle, url);
+		#endif
 
-			// INITIALIZE ANSWER VARIABLES
-			con_info->answerstring = NULL;			// Make sure answer string is empty
-			con_info->answercode = 0;				// Make sure answercode string is empty
+		// CONFIRM THIS IS NECESSARY
+		*con_cls = (void *) con_info;
 
-			if ( 0 == strcasecmp (method, MHD_HTTP_METHOD_POST) ) {
-				con_info->postprocessor = MHD_create_post_processor (connection, POSTBUFFERSIZE, iteratePost, (void *) con_info);
+		return MHD_YES;
+	}
+	
+    struct connectionInfoStruct *con_info = *con_cls;
 
-				// Creating postprocessor failed, free memory manually and exit.
-				if (NULL == con_info->postprocessor) {
-					free (con_info);
-					fprintf(stderr, "ERROR: Creating postprocessor failed.\n");
-					return MHD_NO; // INTERNAL ERROR
+	// Confirm con_info->host includes domain name, otherwise skip directly to error.
+	// THIS IS ONLY NECESSARY WHEN NOT USING REVERSE PROXY
+	if ( ( (strstr (con_info->host, domainName)) != NULL) || DEBUG_FLAG)
+	{
+		if (0 == strcasecmp (method, MHD_HTTP_METHOD_GET))
+		{		
+			if (  validateHandle (con_info->handle) ==  KEY_VALID )
+			{	
+				// Confirm *exact* target URL for DID PLC payload (Bluesky requirement)
+				// NOTE THERE IS NO SUBDOMAIN VERIFICATION HERE, CONSIDER ADDING IT
+				if ( 0 == strcasecmp (url, TARGET_URL) )
+				{
+					// Query database for a *valid* DID PLC associated with 'con_info->handle'
+					con_info->did = queryForDid(con_info->handle);
+					// Confirm DID exists and send it as plain text
+					if ( con_info->did ) { 
+						if (DEBUG_FLAG) printf("DEBUG: GET method using valid host, sent valid DID: %s\n", con_info->did);
+						return sendResponse (connection, con_info->did, "text/plain"); 
+					} else return sendResponse (connection, "ERROR: UNKNOWN HANDLE", "text/plain");
 				}
 				
-				// Setting connection type in structure
-				con_info->connectiontype = POST;
-			}
-			else { //PROBABLY BEST TO CONFIRM IT IS A GET REQUEST?
-			  con_info->connectiontype = GET;
-			}
-
-			*con_cls = (void *) con_info;
-
-			return MHD_YES;
-		}
-
-		// CONFIRM GET REQUEST *AND* TARGET DOMAIN IS INCLUDED IN HOST HEADER (REVERSE PROXY IS ALSO DOING THIS, MIGHT BE REDUNDANT)
-		if ( (0 == strcasecmp (method, "GET")) && (strcasestr(hostHeader, domainName) != NULL ) && ( ( validateHandle (handleHeader) ==  KEY_VALID ) ) ) {
-			
-			// Confirm *exact* target URL for DID PLC payload (Bluesky requirement)
-			// NOTE THERE IS NO SUBDOMAIN VERIFICATION HERE, CONSIDER ADDING IT
-			if ( 0 == strcasecmp (url, TARGET_URL) ) {
-				// Query database for a *valid* DID PLC associated with 'handleHeader'
-				const char *did = queryForDid(handleHeader);
-				// Confirm DID exists and send it as plain text
-				if ( did ) { 
-					if (DEBUG_FLAG) printf("DEBUG: GET valid, sent valid DID: %s\n", did);
-					return sendResponse (connection, did, "text/plain"); 
+				if ( 0 == strcasecmp (url, "/") ) { 
+					if ( (handleRegistered(con_info->handle) == HANDLE_INACTIVE) ) return sendFileResponse (connection, STATIC_REGISTER, HTML_CONTENT);
+					else return sendFileResponse (connection, STATIC_ACTIVE, HTML_CONTENT);
 				}
-			} else
-
-
-			if ( 0 == strcasecmp (url, "/") ) { 
-				if ( (handleRegistered(handleHeader) == HANDLE_INACTIVE) ) return sendFileResponse (connection, STATIC_REGISTER, HTML_CONTENT);
-				else return sendFileResponse (connection, STATIC_ACTIVE, HTML_CONTENT);
-			} return sendResponse (connection, invalidHandlePage2, HTML_CONTENT);			
+				
+				// ALL OTHER URLS
+				sendResponse (connection, invalidHandlePage2, HTML_CONTENT);
+			}
 		}
-
-		if (0 == strcasecmp (method, "POST")) {
-
+		
+		if (0 == strcasecmp (method, MHD_HTTP_METHOD_POST))	
+		{
 			struct connectionInfoStruct *con_info = *con_cls;
 
 			// Checks to see if all data has been received from iterative POST requests
@@ -674,11 +849,14 @@ static enum MHD_Result requestHandler	   (void *cls, struct MHD_Connection *conn
 				return sendResponse (connection, con_info->answerstring, HTML_CONTENT);
 			}
 		}
-
+		
 	} // END THE DOMAIN ACCESS
-	
+
+	// Not a GET or a POST, generate error
+	// ADD A STATUS OPTION FOR 404 AND 403
 	return sendResponse (connection, errorPage, HTML_CONTENT);
 }
+
 
 // *********************************
 // ********* MAIN FUNCTION *********
