@@ -36,6 +36,7 @@
 #define STATIC_ERROR		"static/error.html"
 #define STATIC_SUCCESS		"static/success.html"
 #define STATIC_ACTIVE		"static/active.html"
+#define STATIC_RESERVED		"static/reserved.html"
 
 #define TOKEN_LENGTH 12
 
