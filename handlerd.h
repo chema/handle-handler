@@ -53,21 +53,52 @@
 #define DATABASE_SUCCESS 0
 #define DATABASE_ERROR 1
 
-// NOT USED YET
-enum lockedStatus
-{
-  NOT_LOCKED = 0,
-  LOCKED = 1
-};
+#define RECORD_ADDED 			0
+#define INVALID_DID				1
+#define INVALID_HANDLE  		2
+#define INVALID_LABEL			3
+#define RECORD_DATABASE_ERROR	4
+
+#define ERROR_INVALID_DID "Error: Invalid DID."
+#define ERROR_INVALID_LABEL "Error: Invalid label."
+#define ERROR_INVALID_HANDLE "Error: Invalid handle."
+#define ERROR_NULL_OR_EMPTY_DATA "Error: Data is null or empty."
+#define ERROR_DATABASE "Error: Database operation failed."
+
+// TYPES OF CONNECTIONS ACCEPTED.
+enum connectionType {
+  GET,
+  POST
+} ;
 
 // NOT USED YET
-enum tableColumns
-{
+typedef enum {
+  NOT_LOCKED = 0,
+  LOCKED = 1
+} lockedStatus;
+
+// NOT USED YET
+typedef enum {
   HANDLE_COLUMN = 0,
   DID_COLUMN = 1,
   TOKEN_COLUMN = 2,
   EMAIL_COLUMN = 3,
   LOCKED_COLUMN = 4
-};
+} tableColumns;
+
+typedef enum {
+    RECORD_VALID,
+	RECORD_INVALID_DID,
+	RECORD_INVALID_LABEL,
+	RECORD_INVALID_HANDLE,
+	RECORD_NULL_DATA,
+	RECORD_EMPTY_DATA,
+	RECORD_ERROR_DATABASE
+} validatorResult;
+
+typedef struct {
+    validatorResult result;         // recordValidator result
+    char *token; 				    // Token on RECORD_VALID result, NULL otherwise
+} newRecordResult;
 
 #endif // SERVER_H
