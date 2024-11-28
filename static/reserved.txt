@@ -1,3 +1,5 @@
+# LINES STARTING WITH # ARE SKIPPED
+# AT PROTO LIST OF RESERVED HANDLES FROM https://github.com/bluesky-social/atproto/blob/main/packages/pds/src/handle/reserved.ts
 at
 atp
 plc
@@ -12,9 +14,12 @@ lexicon
 bsky
 bluesky
 handle
+# HANDLES SPECIFIC TO ME
+sanfranciscan
 chema
 josemaria
 hernandezgil
+# GENERAL LIST OF RESERVED HANDLES FROM https://github.com/Rad-Web-Hosting/banned-subdomain-prefixes/blob/master/common.txt
 about
 abuse
 access

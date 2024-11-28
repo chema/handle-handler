@@ -26,7 +26,6 @@
 // FULL Handle pattern (including the domain name) based on regex from https://atproto.com/specs/handle. Added a second \.
 #define VALID_PATTERN_FULL_HANDLE	"^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$"
 
-
 // #define GET             0
 // #define POST            1
 
