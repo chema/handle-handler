@@ -8,11 +8,14 @@
 #define PORT            8123
 #define POSTBUFFERSIZE  2048
 
-#define TARGET_URL 			"/.well-known/atproto-did"
+#define URL_WELL_KNOWN_ATPROTO 			"/.well-known/atproto-did"
 #define MAXDIDSIZE			256   // Implied desired max from https://atproto.com/specs/did
 #define MAX_SIZE_DID_PLC	32    // Explicit max from https://web.plc.directory/spec/v0.1/did-plc
 #define MAXANSWERSIZE   	1024
 #define HTML_CONTENT		"text/html"
+#define CONTENT_TEXT		"text/plain"
+#define CONTENT_HTML		"text/html"
+
 
 // DEFINE THE REGULAR EXPRESSION PATTERNS FOR DATA VALIDATION
 // Unused generic DID pattern based on recommendation from https://atproto.com/specs/did (note lack of limit length and case control)
@@ -36,6 +39,7 @@
 #define STATIC_SUCCESS		"static/success.html"
 #define STATIC_ACTIVE		"static/active.html"
 #define STATIC_RESERVED		"static/reserved.html"
+#define STATIC_NOTFOUND		"static/404.html"
 
 #define TOKEN_LENGTH 12
 
