@@ -6,13 +6,12 @@
 #include <microhttpd.h>
 
 #define PORT            8123
-#define POSTBUFFERSIZE  2048
+#define POSTBUFFERSIZE  1024
 
 #define URL_WELL_KNOWN_ATPROTO 			"/.well-known/atproto-did"
 #define MAXDIDSIZE			256   // Implied desired max from https://atproto.com/specs/did
 #define MAX_SIZE_DID_PLC	32    // Explicit max from https://web.plc.directory/spec/v0.1/did-plc
-#define MAXANSWERSIZE   	1024
-#define HTML_CONTENT		"text/html"
+#define MAXANSWERSIZE   	2048
 #define CONTENT_TEXT		"text/plain"
 #define CONTENT_HTML		"text/html"
 
@@ -67,6 +66,7 @@
 #define ERROR_INVALID_HANDLE "Error: Invalid handle."
 #define ERROR_NULL_OR_EMPTY_DATA "Error: Data is null or empty."
 #define ERROR_DATABASE "Error: Database operation failed."
+#define ERROR_REQUEST_FAILED "Error: Request failed."
 
 // TYPES OF CONNECTIONS ACCEPTED.
 enum connectionType {

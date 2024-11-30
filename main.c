@@ -40,6 +40,10 @@ const char *principalDatabaseGlobal = NULL;
 #define FILTER_DB_FILENAME "filtered-handles.db"
 #define PRINCIPAL_DB_FILENAME "active-user-handles.db"
 
+#define PLACEHOLDER_ERROR "{{ ERROR }}"
+#define PLACEHOLDER_TOKEN "{{ TOKEN }}"
+
+
 // GLOBAL COMPILED REGEX
 regex_t regexDid;
 regex_t regexHandle;
@@ -88,13 +92,8 @@ Email (optional): <input name=\"email\" type=\"text\"><br>\
 
 const char *confirmationPage = "<html><body><p>The subdomain has been succesfully associated with your DID.</p><p>You control token is %s. Save it, you will need it to delete this record!</p></body></html>";
 
-// TO DO: Pass on error message details
-const char *errorPage = "<html><body>Error: Request failed.</body></html>";
-
 // NO DID PLC Response Received
 const char *noResponsePage = "<html><body>You did not enter any information. Enter your DID without the 'did=' at the beginning.</body></html>";
-
-
 const char *userNotFoundPage = "<html><head></head><body>User not found</body></html>";
 
 // HANDLE RECEIVED IS NOT VALID
@@ -147,9 +146,9 @@ void generateSecureToken(char *token) {
     token[TOKEN_LENGTH] = '\0'; // Null-terminate the token
 }
 
-// ***************************************************************************
-// BEGIN FILE READING ********************************************************
-// ***************************************************************************
+// **************************************************************************
+// ****** FILE READING ******************************************************
+// **************************************************************************
 	
 // Function to read the contents of the HTML file
 char *readFile (const char *filePath) {
@@ -198,6 +197,10 @@ char *readFile (const char *filePath) {
 		return buffer;
 	}
 
+// *********************************
+// ********* FILES PATHS ***********
+// *********************************
+
 // CONSTRUCT AN ABSOLUTE PATH FILE NAMES, TO FREE AT END
 const char *buildAbsolutePath (const char *baseDirectory, const char *relativePath) {
     if (!baseDirectory || !relativePath) {
@@ -229,52 +232,81 @@ const char *buildAbsolutePath (const char *baseDirectory, const char *relativePa
     return absolutePath;
 }
 
-/*
-// Helper function to replace placeholder text in a string
-static char *replacePlaceholder(const char *original, const char *placeholder, const char *replacement) {
-    if (!original || !placeholder || !replacement) {
-        return NULL; // Ensure inputs are not null
-    }
+// CONSTRUCT GLOBAL PATH FILE NAMES, TO FREE AT END
+int buildAbsoluteDatabasePaths ()
+{
+	principalDatabaseGlobal = buildAbsolutePath( baseDirectory, PRINCIPAL_DB_FILENAME );
+	if (!principalDatabaseGlobal) {
+		fprintf(stderr, "Memory allocation failure (DB).\n");
+		return 1;
+	}
+	
+	filterDatabaseGlobal = buildAbsolutePath( baseDirectory, FILTER_DB_FILENAME );
+	if (!filterDatabaseGlobal) {
+		fprintf(stderr, "Memory allocation failure (DB).\n");
+		return 1;
+	}
+	
+	return 0; // Success
+}
 
-    size_t originalLen = strlen(original);
-    size_t placeholderLen = strlen(placeholder);
-    size_t replacementLen = strlen(replacement);
+// NAIVELY CONFIRM BASE DIRECTORY IS AN ABSOLUTE PATH
+int isAbsolutePath(const char *path) {
+    return path && path[0] == '/';
+}
 
-    // Calculate the new size (assuming one placeholder)
-    size_t newSize = originalLen + replacementLen - placeholderLen + 1;
-    char *modified = (char *)malloc(newSize);
-    if (!modified) {
+// FUNCTION TO FREE GLOBAL PATHS (CALLED WHEN PROGRAM EXITS)
+void freeGlobalPaths () {
+	// FREE DATABASE PATH GLOBALS
+	free((char *) principalDatabaseGlobal);
+	principalDatabaseGlobal = NULL;
+	free((char *) filterDatabaseGlobal);
+	filterDatabaseGlobal = NULL;
+}
+
+
+// HELPER FUNCTION TO REPLACE PLACEHOLDER_ERROR TEXT IN A STRING
+char* replacePlaceholder(const char *html, const char* placeholder, const char *message)
+{
+	// printf("PLACEHOLDER: %s\n", placeholder);
+	// printf("MESSAGE: %s\n", message);
+
+    const char *pos = strstr(html, placeholder);
+    if (pos == NULL) {
+        fprintf(stderr, "ERROR: Placeholder not found.\n");
         return NULL;
     }
 
-    // Find the placeholder
-    const char *tmp = strstr(original, placeholder);
-    if (!tmp) {
-        // If no placeholder found, copy the original string and return
-        strcpy(modified, original);
-        return modified;
+    // Calculate sizes
+    size_t html_len = strlen(html);
+    size_t placeholder_len = strlen(placeholder);
+    size_t replacement_len = strlen(message);
+
+	// printf("LENGTHS: %ld %ld %ld\n", html_len, placeholder_len, replacement_len );
+
+
+    // Allocate new buffer for the updated string
+    size_t new_len = html_len - placeholder_len + replacement_len;
+
+	// printf("NEW LENGTH: %ld\n", new_len );
+
+    char *new_html = malloc(new_len + 1);
+    if (new_html == NULL) {
+        perror("malloc");
+        exit(EXIT_FAILURE);
     }
 
-    // Perform the replacement
-    const char *current = original;
-    char *dest = modified;
+    // Copy parts of the original string and insert the message
+    size_t prefix_len = pos - html;
+    strncpy(new_html, html, prefix_len); // Copy up to the placeholder
+    new_html[prefix_len] = '\0'; // Null-terminate the prefix
+    strcat(new_html, message); // Append the replacement message
+    strcat(new_html, pos + placeholder_len); // Append the rest
 
-    // Copy part before the placeholder
-    size_t lenBefore = tmp - current;
-    memcpy(dest, current, lenBefore); // Use memcpy for raw copy
-    dest += lenBefore;
+	// printf("NEW HTML: %s\n", new_html );
 
-    // Copy the replacement
-    memcpy(dest, replacement, replacementLen);
-    dest += replacementLen;
-
-    // Copy the remaining part of the original string after the placeholder
-    const char *remaining = tmp + placeholderLen;
-    strcpy(dest, remaining);
-
-    return modified;
+    return new_html;
 }
-*/
 
 // ***************************************************************************
 // BEGIN REGEX AND VALIDATORS ************************************************
@@ -392,7 +424,7 @@ char* removeDomainName(const char *host) {
     return labelSegment; // CALLER MUST FREE
 }
 
-// END REGEX AND VALIDATORS  ******************************************
+// END REGEX AND VALIDATORS  *************************************************
 
 
 // ***************************************************************************
@@ -668,7 +700,6 @@ newRecordResult *addNewRecord (const char *handle, const char *did, const char *
     return newRecord;
 }
 
-
 // QUERY DATABASE FOR EXISTANCE OF SPECIFIC 'handle'
 int handleRegistered (const char *handle) {
 	const char *sql = "SELECT 1 FROM userTable WHERE handle = ? LIMIT 1;";
@@ -730,12 +761,12 @@ int labelReserved (const char *label) {
 	// Execute the query
 	int rc = sqlite3_step(stmt);
 	if (rc == SQLITE_ROW) {
-		if (DEBUG_FLAG) printf("DEBUG: Label '%s' is a reserved word.\n", label);
+		if (DEBUG_FLAG) printf("DEBUG: Label '%s' is a restricted word.\n", label);
 		sqlite3_finalize(stmt);
 		sqlite3_close(db);
 		return HANDLE_ACTIVE; // Exists
 	} else if (rc == SQLITE_DONE) {
-		if (DEBUG_FLAG) printf("DEBUG: Label '%s' is not a reserved word .\n", label);
+		if (DEBUG_FLAG) printf("DEBUG: Label '%s' is not a restricted word .\n", label);
 		sqlite3_finalize(stmt);
 		sqlite3_close(db);
 		return HANDLE_INACTIVE; // Does not exist
@@ -746,7 +777,6 @@ int labelReserved (const char *label) {
 		return HANDLE_ERROR; // Error
 	}
 }
-
 
 // QUERY DATABASE FOR A VALID IDENTIFIER ASSOCIATED WITH HANDLE
 const char* queryForDid (const char *handle) {
@@ -800,8 +830,7 @@ const char* queryForDid (const char *handle) {
 // ********* SERVER FUNCTIONS *********
 // ************************************
 
-// Send Response with Specific Content-Type Header
-// TO DO: ADD A unsigned int status_code OPTION
+// SEND RESPONSE WITH SPECIFIC CONTENT-TYPE HEADER
 static enum MHD_Result sendResponse (struct MHD_Connection *connection, const char *content, const char *contentType)
 {
 	enum MHD_Result ret;
@@ -822,25 +851,48 @@ static enum MHD_Result sendResponse (struct MHD_Connection *connection, const ch
 	return ret;
 }
 
-// Send Response with Specific Content-Type Header
-// TO DO: ADD A unsigned int status_code OPTION
-static enum MHD_Result sendDynamicResponse (struct MHD_Connection *connection, const char *content, const char *contentType)
+// SENDS AN HTML ERROR RESPONSE WITH A CUSTOM MESSAGE
+// TO DO: MAKE SURE THE STATIC_ERROR IS A ABSOLUTE PATH
+static enum MHD_Result sendErrorResponse (struct MHD_Connection *connection, const char *message)
 {
+	#ifdef VERBOSE_FLAG
+	printf("RESPONSE: '%s' with '%s'\n", message, STATIC_ERROR);
+	#endif
+	
 	enum MHD_Result ret;
 	struct MHD_Response *response;
+	char *htmlContent;	
+	char *responseContent;
 
-	response = MHD_create_response_from_buffer (strlen (content), (void *) content, MHD_RESPMEM_MUST_COPY);
-	if (! response) return MHD_NO;
+	htmlContent = readFile(STATIC_ERROR);
+	if (!htmlContent) {
+		fprintf(stderr, "ERROR: Failed to access file '%s' (sendErrorResponse)\n", STATIC_ERROR);
+		return MHD_NO; // SIGNAL FAILURE TO READ FILE
+	}
+
+	responseContent = replacePlaceholder(htmlContent, PLACEHOLDER_ERROR, message);
+	free(htmlContent);
+	if (!responseContent) {
+        fprintf(stderr, "ERROR: Failed to replace placeholder in file content (sendErrorResponse)\n");
+		return MHD_NO; // SIGNAL FAILURE TO ALLOCATE MEMORY
+	}
+	
+	response = MHD_create_response_from_buffer(strlen(responseContent), (void *)responseContent, MHD_RESPMEM_MUST_FREE );
+	if (!response) {
+		fprintf(stderr, "ERROR: Memory allocation failed (sendErrorResponse)\n");
+		free(responseContent); // Must free, MHD_RESPMEM_MUST_FREE did not work
+		return MHD_NO; // SIGNAL FAILURE TO ALLOCATE MEMORY
+	}
 
 	// Add content type header to response
-	if (contentType != NULL) MHD_add_response_header(response, "Content-Type", contentType);
+	MHD_add_response_header(response, "Content-Type", CONTENT_HTML);
 
 	// Queue the response
 	ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
 
 	// Clean up
 	MHD_destroy_response(response);
-
+	
 	return ret;
 }
 
@@ -917,46 +969,100 @@ static enum MHD_Result sendWellKnownResponse (struct MHD_Connection *connection,
 	return ret;
 }
 
-
-/*
-// SEND FILE WITH SPECIFIC ERROR MESSAGE
-static enum MHD_Result sendErrorResponse (struct MHD_Connection *connection, const char *filename, const char *contentType, const char *errorMessage)
+// SEND THE RESPONSE TO A NEW USER REQUEST
+// TO DO: CHANGE FROM LABEL/SEGMENT TO FULL HANDLE
+static enum MHD_Result sendNewUserResponse (struct MHD_Connection *connection, const char *label, const char *did, const char *email)
 {
-	enum MHD_Result ret;
-	struct MHD_Response *response;
-		
-    char *htmlContent = readFile(filename);
-    if (!htmlContent) {
-        return MHD_NO;
-    }
-
-    // Replace {{ ERROR }} in htmlContent with an error message
-    char *modifiedContent = replacePlaceholder(htmlContent, "{{ ERROR }}", errorMessage);
-    free(htmlContent); // Free the original content
-
-    if (!modifiedContent) {
-        return MHD_NO; // Handle replacement failure
-    }
-
-
-    response = MHD_create_response_from_buffer(strlen(htmlContent), (void *)htmlContent, MHD_RESPMEM_MUST_FREE);
-	if (! response) {
-		free(htmlContent); // Cleanup in case of failure
-		return MHD_NO;
+	if ( !label || !did || !email )
+	{
+		fprintf(stderr, "ERROR: Incomplete user information (sendNewUserResponse)\n");
+		return MHD_NO; // SIGNAL PROCESSING INFORMATION
 	}
 
-	// Add content type header to response
-	if (contentType != NULL) MHD_add_response_header(response, "Content-Type", contentType);
+	#ifdef VERBOSE_FLAG
+	printf("RESPONSE: New Record Attempt for: handle=%s, did=%s, email=%s\n", label, did, email);
+	#endif
 
-	// Queue the response
+	enum MHD_Result ret;
+	struct MHD_Response *response;
+	char *htmlContent;	
+	char *responseContent;
+
+	newRecordResult *record = addNewRecord(label, did, email);
+	if (!record)
+	{
+		fprintf(stderr, "ERROR: Unable to create new record result (sendNewUserResponse)\n");
+		return MHD_NO; // SIGNAL FAILURE TO ALLOCATE MEMORY
+	}
+	
+	if ( record->result != RECORD_VALID)
+	{
+		printf("ERROR: Unable to create new user record.\n"); //DEBUG
+		
+		switch (record->result) {
+			case RECORD_INVALID_DID:
+				return sendErrorResponse (connection, ERROR_INVALID_DID);
+			break;		
+			case RECORD_INVALID_LABEL:
+				return sendErrorResponse (connection, ERROR_INVALID_LABEL);
+			break;
+			case RECORD_INVALID_HANDLE:
+				return sendErrorResponse (connection, ERROR_INVALID_HANDLE);	
+			break;
+			case RECORD_NULL_DATA:  // CONSOLIDATED HANDLING
+			case RECORD_EMPTY_DATA:
+				return sendErrorResponse (connection, ERROR_NULL_OR_EMPTY_DATA);	
+			break;
+			case RECORD_ERROR_DATABASE:
+				return sendErrorResponse (connection, ERROR_DATABASE);	
+			break;
+			default:
+				return sendErrorResponse (connection, "ERROR: Unknown validation result.");	
+			break;
+		}
+	}
+		
+	#ifdef VERBOSE_FLAG
+	printf("RESPONSE: New Record Created, token: %s\n", record->token);
+	#endif
+	
+	htmlContent = readFile(STATIC_SUCCESS);
+	if (!htmlContent) {
+		freeNewRecordResult(record);
+		fprintf(stderr, "ERROR: Failed to access file '%s' (sendNewUserResponse)\n", STATIC_SUCCESS);		
+		return MHD_NO; // SIGNAL FAILURE TO READ FILE
+	}
+
+	// REPLACE TOKEN PLACEHOLDER
+	responseContent = replacePlaceholder(htmlContent, PLACEHOLDER_TOKEN, record->token);
+
+	free(htmlContent);
+	if (!responseContent) {
+        fprintf(stderr, "ERROR: Failed to replace placeholder in file content (sendNewUserResponse)\n");
+		freeNewRecordResult(record);
+		return MHD_NO; // SIGNAL FAILURE TO ALLOCATE MEMORY
+	}		
+	
+	response = MHD_create_response_from_buffer(strlen(responseContent), (void *)responseContent, MHD_RESPMEM_MUST_FREE );
+	if (!response) {
+		fprintf(stderr, "ERROR: Memory allocation failed (sendNewUserResponse)\n");
+		freeNewRecordResult(record); // Cleanup in case of failure
+		free(responseContent); // Must free, MHD_RESPMEM_MUST_FREE did not work
+		return MHD_NO; // SIGNAL FAILURE TO ALLOCATE MEMORY
+	}
+
+	// ADD CONTENT TYPE HEADER TO RESPONSE
+	MHD_add_response_header(response, "Content-Type", CONTENT_HTML);
+
+	// QUEUE THE RESPONSE
 	ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
 
-	// Clean up
+	// CLEAN UP
 	MHD_destroy_response(response);
-
+	freeNewRecordResult(record);
+	// free(responseContent); // NOT NECESSARY DUE TO MHD_RESPMEM_MUST_FREE FLAG
 	return ret;
 }
-*/
 
 
 // POST REQUEST MANAGER
@@ -1105,14 +1211,12 @@ static enum MHD_Result requestHandler	   (void *cls, struct MHD_Connection *conn
 		con_info->host = hostHeader;
 
  		#ifdef NGINX_FLAG
-			// 'X-ATPROTO-HANDLE' OPTIONAL AND REQUIRES NGINX REVERSE PROXY.
-			con_info->handle = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "X-ATPROTO-HANDLE");
+		// 'X-ATPROTO-HANDLE' OPTIONAL AND REQUIRES NGINX REVERSE PROXY.
+		con_info->handle = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "X-ATPROTO-HANDLE");
 		#else
-			// DYNAMICALLY ALLOCATED, NEEDS TO BE FREED
-			con_info->handle = removeDomainName(con_info->host);
+		// DYNAMICALLY ALLOCATED, NEEDS TO BE FREED
+		con_info->handle = removeDomainName(con_info->host);
 		#endif
-
-		printf ("con_info->host=%s & con_info->handle: %s\n",con_info->host,con_info->handle);
 
 		con_info->did = NULL;
 		con_info->email = NULL;
@@ -1120,7 +1224,6 @@ static enum MHD_Result requestHandler	   (void *cls, struct MHD_Connection *conn
 		// INITIALIZE THE CONNECTIONINFO STRUCT. SOME ONLY APPLY TO 'POST' REQUESTS.
 		if ( 0 == strcasecmp (method, MHD_HTTP_METHOD_POST) ) {
 			con_info->postprocessor = MHD_create_post_processor (connection, POSTBUFFERSIZE, iteratePost, (void *) con_info);
-
 			// Creating postprocessor failed, free memory manually and exit.
 			if (NULL == con_info->postprocessor) {
 				free (con_info);
@@ -1151,19 +1254,22 @@ static enum MHD_Result requestHandler	   (void *cls, struct MHD_Connection *conn
 	// **************************************
 	if (0 == strcasecmp (method, MHD_HTTP_METHOD_GET))
 	{	
-		// WELL-KNOWN URL FOR DID PLC PAYLOAD (ATPROTO REQUIREMENT) GETS RESPONSE BASED ON DATABASE RESULTS
-		// NO NEED FOR HANDLE/SUBDOMAIN VERIFICATION
-		if ( 0 == strcasecmp (url, URL_WELL_KNOWN_ATPROTO) ) return sendWellKnownResponse (connection, con_info->handle);
+		// SEND RESPONSE TO WELL-KNOWN URL GET REQUEST BASED ON DATABASE RESULTS HANDLE/SUBDOMAIN
+		// HANDLE/SUBDOMAIN VERIFICATION NOT NECESSARY
+		if ( 0 == strcasecmp (url, URL_WELL_KNOWN_ATPROTO) )
+		{
+			return sendWellKnownResponse (connection, con_info->handle);
+		}
 		
 		if ( (0 == strcasecmp (url, "/")) && (validateHandle (con_info->handle) ==  KEY_VALID ) ) {
 			// CREATE A NEW RESPONSE PAGE FOR THIS BLOCK
-			if ( (handleRegistered(con_info->handle) == HANDLE_ACTIVE) ) return sendFileResponse (connection, STATIC_ACTIVE, HTML_CONTENT);
-			if ( (labelReserved(con_info->handle) == HANDLE_ACTIVE) ) return sendFileResponse (connection, STATIC_RESERVED, HTML_CONTENT); 
-			return sendFileResponse (connection, STATIC_REGISTER, HTML_CONTENT); 
+			if ( (handleRegistered(con_info->handle) == HANDLE_ACTIVE) ) return sendFileResponse (connection, STATIC_ACTIVE, CONTENT_HTML);
+			if ( (labelReserved(con_info->handle) == HANDLE_ACTIVE) ) return sendFileResponse (connection, STATIC_RESERVED, CONTENT_HTML); 
+			return sendFileResponse (connection, STATIC_REGISTER, CONTENT_HTML); 
 		}
 			
 		// ALL OTHER URLS RECEIVE A 404 RESPONSE
-		return sendFileResponse (connection, STATIC_NOTFOUND, HTML_CONTENT);
+		return sendFileResponse (connection, STATIC_NOTFOUND, CONTENT_HTML);
 	}
 	
 	// ***************************************
@@ -1171,7 +1277,6 @@ static enum MHD_Result requestHandler	   (void *cls, struct MHD_Connection *conn
 	// ***************************************	
 	if (0 == strcasecmp (method, MHD_HTTP_METHOD_POST))	
 	{
-
 		// Checks to see if all data has been received from iterative POST requests
 		if (*upload_data_size != 0)
 		{
@@ -1180,103 +1285,14 @@ static enum MHD_Result requestHandler	   (void *cls, struct MHD_Connection *conn
 			return MHD_YES;
 		}
 		
-		if ( con_info->did && con_info->email ) {
-			if (DEBUG_FLAG) printf("ALL DATA RECEIVED: handle=%s, did=%s, email=%s\n", con_info->handle, con_info->did, con_info->email);
-			
-			newRecordResult *record = addNewRecord(con_info->handle, con_info->did, con_info->email);
-			
-			if (!record) {
-				fprintf(stderr, "ERROR: Memory allocation failed (newRecordResult).\n");
-				con_info->answerstring = strdup("ERROR: Memory allocation failed (newRecordResult).");
-				return MHD_NO; // Signal failure to allocate memory
-			}		
-			
-			switch (record->result) {
-				case RECORD_VALID:
-					printf("Valid record created. Token: %s\n", record->token);
-
-					// CREATE ANSWER STRING
-					char tempAnswer[MAXANSWERSIZE];
-
-					// Format the string into the temporary array
-					snprintf(tempAnswer, MAXANSWERSIZE, confirmationPage, record->token);
-
-					// Assign the string to con_info->answerstring, duplicating it for persistent storage
-					con_info->answerstring = strdup(tempAnswer);
-					break;
-				case RECORD_INVALID_DID:
-					printf( ERROR_INVALID_DID "\n");
-					con_info->answerstring = strdup(ERROR_INVALID_DID);
-					break;
-				case RECORD_INVALID_LABEL:
-					printf( ERROR_INVALID_LABEL " \n");
-					con_info->answerstring = strdup(ERROR_INVALID_LABEL);
-					break;
-				case RECORD_INVALID_HANDLE:
-					printf( ERROR_INVALID_HANDLE " \n");
-					con_info->answerstring = strdup(ERROR_INVALID_HANDLE);
-					break;
-				case RECORD_NULL_DATA:  // Consolidated handling
-				case RECORD_EMPTY_DATA:
-					printf( ERROR_NULL_OR_EMPTY_DATA " \n");
-					con_info->answerstring = strdup(ERROR_NULL_OR_EMPTY_DATA);
-					break;
-				case RECORD_ERROR_DATABASE:
-					printf( ERROR_DATABASE " \n");
-					con_info->answerstring = strdup(ERROR_DATABASE);
-					break;
-				default:
-					printf("Error: Unknown validation result.\n");
-					con_info->answerstring = strdup("ERROR: Record creation failed.");
-					break;
-			}
-			freeNewRecordResult(record);  // Clean up
-
-			if (!con_info->answerstring) return MHD_NO;  // Handle strdup failure			
-			
-			return sendResponse (connection, con_info->answerstring, HTML_CONTENT);
+		if ( con_info->did && con_info->email )
+		{ 
+			return sendNewUserResponse (connection, con_info->handle, con_info->did, con_info->email);	
 		}
 	}
 
-	// Not a GET or a POST, generate error
-	// ADD A STATUS OPTION FOR 404 AND 403
-	return sendResponse (connection, errorPage, HTML_CONTENT);
-}
-
-// *********************************
-// ********* FILES PATHS ***********
-// *********************************
-
-// CONSTRUCT GLOBAL PATH FILE NAMES, TO FREE AT END
-int buildAbsoluteDatabasePaths ()
-{
-	principalDatabaseGlobal = buildAbsolutePath( baseDirectory, PRINCIPAL_DB_FILENAME );
-	if (!principalDatabaseGlobal) {
-		fprintf(stderr, "Memory allocation failure (DB).\n");
-		return 1;
-	}
-	
-	filterDatabaseGlobal = buildAbsolutePath( baseDirectory, FILTER_DB_FILENAME );
-	if (!filterDatabaseGlobal) {
-		fprintf(stderr, "Memory allocation failure (DB).\n");
-		return 1;
-	}
-	
-	return 0; // Success
-}
-
-// NAIVELY CONFIRM BASE DIRECTORY IS AN ABSOLUTE PATH
-int isAbsolutePath(const char *path) {
-    return path && path[0] == '/';
-}
-
-// FUNCTION TO FREE GLOBAL PATHS (CALLED WHEN PROGRAM EXITS)
-void freeGlobalPaths () {
-	// FREE DATABASE PATH GLOBALS
-	free((char *) principalDatabaseGlobal);
-	principalDatabaseGlobal = NULL;
-	free((char *) filterDatabaseGlobal);
-	filterDatabaseGlobal = NULL;
+	// GENERAL ERROR MESSAGE
+	return sendErrorResponse (connection, ERROR_REQUEST_FAILED);	
 }
 
 
@@ -1293,7 +1309,6 @@ int main(int argc, char *argv[])
 	const char *commandArg = argv[1];  	  // Initial command
 	baseDirectory = argv[2];  			  // User-provided base directory	
 	domainName = argv[3];
-
 
 	// CONSTRUCT GLOBAL PATH FILE NAMES. TO FREE AT END
 	int confirmBase = isAbsolutePath(baseDirectory);
