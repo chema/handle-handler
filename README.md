@@ -31,9 +31,7 @@ Once you have the wildcard certificates, edit the sample `default-ssl-nginx` con
 ## TO DO
 
 * Add automatic forwarding from active handles.
-* Add reverse extraction of DID via CURL and lresolv from the full handle
-* Review the schema for the user table to include domain name and full handle
-* Consider removing need for the extra header from reverse proxy.
+* Add reverse extraction via lresolv from the full handle
 * Add 15 minute cool down period between changes.
 * Verify locked status of handle.
 * Implement `disassociate` page.
