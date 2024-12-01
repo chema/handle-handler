@@ -22,7 +22,7 @@
             border-radius: 8px;
             box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
             width: 80%;
-            max-width: 600px;
+            max-width: 500px;
         }
         h1 {
             color: #5bc0de;
@@ -31,6 +31,7 @@
             margin-top: 20px;
             font-size: 1.1em;
             color: #555;
+			line-height: 1.5;
         }
         .token {
             margin-top: 20px;
@@ -43,21 +44,27 @@
         a {
             color: #007bff;
             text-decoration: none;
-            margin-top: 20px;
-            display: inline-block;
+        }
+        @media (max-width: 600px) {
+            .container {
+                padding: 15px;
+            }
+            h1 {
+                font-size: 1.2rem;
+            }
         }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Success!</h1>
-        <p class="message">This handle is now associated with your Bluesky account.</p>
+        <p class="message">This handle is now associated with your Bluesky account. Finish the process on <a href="https://bsky.app/settings/account" target="_blank">your Bluesky account page</a>.</p>
         <div class="token">
             <h3>Your Security Token:</h3>
             <p>{{ TOKEN }}</p>
-            <p><i>Please save this token as you will need it to dissociate your Bluesky account from this handle.</i></p>
+            <p><i>Please save this token as you will need it to dissociate your Bluesky account from this handle (coming soon!). You can also just message me.</i></p>
         </div>
-        <a href="https://bsky.app/profile/baysky.social/feed/aaac5vicl4pww" style="margin-top: 30px;">#Baysky Feed on bsky.app</a>
+        <p class="message"><a href="https://bsky.app/profile/baysky.social/feed/aaac5vicl4pww">Baysky Feed</a></p>
     </div>
 </body>
 </html>

@@ -37,7 +37,6 @@ Once you have the wildcard certificates, edit the sample `default-ssl-nginx` con
 * Add 15 minute cool down period between changes.
 * Verify locked status of handle.
 * Implement `disassociate` page.
-* Implement stronger handle review.
 * Clean up debug code and comments.
 * Add stronger concurrent connection handling.
 * Add Podman container language.

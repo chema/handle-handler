@@ -1,19 +1,26 @@
 #ifndef HANDLERD_H
 #define HANDLERD_H
 
-
 #include <regex.h>
 #include <microhttpd.h>
+#include <sqlite3.h>
+#include <curl/curl.h>
+#include <ctype.h>
 
 #define PORT            8123
 #define POSTBUFFERSIZE  1024
 
 #define URL_WELL_KNOWN_ATPROTO 			"/.well-known/atproto-did"
-#define MAXDIDSIZE			256   // Implied desired max from https://atproto.com/specs/did
+#define _URL_WELL_KNOWN_		"https://%s/.well-known/atproto-did"
+#define URL_MAX_SIZE		512
+#define DATA_MAX_SIZE		256
+
 #define MAX_SIZE_DID_PLC	32    // Explicit max from https://web.plc.directory/spec/v0.1/did-plc
-#define MAXANSWERSIZE   	2048
+#define MAXDIDSIZE			256   // Implied desired max from https://atproto.com/specs/did (UNUSED)
+
 #define CONTENT_TEXT		"text/plain"
 #define CONTENT_HTML		"text/html"
+
 
 
 // DEFINE THE REGULAR EXPRESSION PATTERNS FOR DATA VALIDATION
@@ -27,9 +34,8 @@
 #define VALID_PATTERN_LABEL			"^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)$"
 // FULL Handle pattern (including the domain name) based on regex from https://atproto.com/specs/handle. Added a second \.
 #define VALID_PATTERN_FULL_HANDLE	"^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$"
-
-// #define GET             0
-// #define POST            1
+// DID PLC Syntax based on https://web.plc.directory/spec/v0.1/did-plc: exactly 32 characters, "did:plc:" prefix+24 base 32 encoding set characters.
+#define DID_PLC_SPEC_PATTERN		"did:plc:[a-zA-Z2-7]{24}"
 
 // STATIC HTML FILENAMES
 #define STATIC_REGISTER		"static/register.html"
@@ -40,7 +46,7 @@
 #define STATIC_RESERVED		"static/reserved.html"
 #define STATIC_NOTFOUND		"static/404.html"
 
-#define TOKEN_LENGTH 12
+#define TOKEN_LENGTH 10
 
 #define TRUE 1
 #define FALSE 0
@@ -48,6 +54,10 @@
 #define HANDLE_ACTIVE 1
 #define HANDLE_INACTIVE 0
 #define HANDLE_ERROR -1
+
+#define VALUE_ACTIVE 1
+#define VALUE_INACTIVE 0
+#define VALUE_ERROR -1
 
 #define KEY_VALID 0
 #define KEY_INVALID 1

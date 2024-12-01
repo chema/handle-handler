@@ -14,8 +14,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <sqlite3.h>
-
 #include "handlerd.h"
 
 #define DEBUG_FLAG 1
@@ -49,6 +47,7 @@ regex_t regexDid;
 regex_t regexHandle;
 regex_t regexLabel;
 regex_t regexFullHandle;
+regex_t regexDidPLC;
 
 struct connectionInfoStruct
 {
@@ -72,6 +71,11 @@ struct connectionInfoStruct
 	// unsigned int answercode;
 };
 
+// Struct to hold CURL response data
+struct curlResponse {
+    char *data;
+    size_t size;
+};
 
 // ***************************************************************************
 // BEGIN HARD CODED HTML CODE ************************************************
@@ -145,6 +149,105 @@ void generateSecureToken(char *token) {
     fclose(urandom);
     token[TOKEN_LENGTH] = '\0'; // Null-terminate the token
 }
+
+
+// **************************************************************************
+// ****** CURL FUNCTIONS ****************************************************
+// **************************************************************************
+
+
+// CALLBACK FUNCTION TO HANDLE INCOMING DATA
+size_t curlReceiveData (void *ptr, size_t size, size_t nmemb, void *userdata) {
+    size_t total_size = size * nmemb;
+    struct curlResponse *response = (struct curlResponse *)userdata;
+
+    // Allocate or expand memory to hold the response data
+    char *new_data = realloc(response->data, response->size + total_size + 1);
+    if (new_data == NULL) {
+        fprintf(stderr, "CURL: Failed to allocate memory for response data\n");
+        return 0;
+    }
+
+    response->data = new_data;
+    memcpy(response->data + response->size, ptr, total_size);
+    response->size += total_size;
+    response->data[response->size] = '\0'; // Null-terminate the string
+
+    return total_size;
+}
+
+const char *getWellKnownDID (const char *handle)
+{
+    CURL *curl;
+    CURLcode res;
+	char url[URL_MAX_SIZE]; // WHAT IS THE MAX SIZE?
+    char errbuf[CURL_ERROR_SIZE];
+	const char *DID = NULL;
+    struct curlResponse response = {NULL, 0};
+	
+    // INITIALIZE LIBCURL
+    curl = curl_easy_init();
+    if (!curl) {
+        fprintf(stderr, "CURL: Failed to initialize curl\n");
+        return NULL;
+    }
+	
+    // PROVIDE A BUFFER TO STORE ERRORS IN
+    curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, errbuf);
+	 
+    // SET THE ERROR BUFFER AS EMPTY BEFORE PERFORMING A REQUEST
+    errbuf[0] = 0;
+
+    // Construct the URL using the URL_WELL_KNOWN
+    snprintf(url, sizeof(url), _URL_WELL_KNOWN_, handle);
+	if (snprintf(url, sizeof(url), _URL_WELL_KNOWN_, handle) >= sizeof(url)) {
+        fprintf(stderr, "CURL: URL is too long\n");
+        curl_easy_cleanup(curl);
+        return NULL;
+    }
+
+   // Set curl options
+	curl_easy_setopt(curl, CURLOPT_URL, url);                  			// URL to fetch
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlReceiveData );	// Callback function to store data
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);      			// Pass the response struct
+
+	// PERFORM THE FILE TRANSFER
+	res = curl_easy_perform(curl);
+    if (res != CURLE_OK) {
+        fprintf(stderr, "CURL: Error from libcurl: %s\n", curl_easy_strerror(res));
+        if (response.data) free(response.data);
+        curl_easy_cleanup(curl);
+        return NULL;
+    }
+	
+	// CONFIRM HEADER AND CODE CHECK
+	// ADD VALIDATOR
+	
+	if( response.size != MAX_SIZE_DID_PLC) {
+		printf("CURL: Response is not the correct size (32): %ld\n", response.size);
+        if (response.data) free(response.data);
+        curl_easy_cleanup(curl);
+        return NULL;
+    }
+	
+	// Output the received DID
+	printf("CURL: Received DID: %s\n", response.data);
+	printf("CURL: Received DID size: %ld\n", response.size);
+
+	DID = strndup(response.data, response.size);
+	if (!DID) {
+		fprintf(stderr, "CURL: Failed to allocate memory for DID\n");
+		free(response.data);
+		curl_easy_cleanup(curl);
+		return NULL;
+	}
+	
+	// Clean up
+	free(response.data); // Free the allocated memory
+	curl_easy_cleanup(curl);
+	return DID;
+}
+
 
 // **************************************************************************
 // ****** FILE READING ******************************************************
@@ -332,7 +435,7 @@ int handleRegexError(int ret, regex_t *regex, const char *patternName) {
 int compileGlobalRegex( ) {
     int ret;
 
-	// Compile DID regex
+	// Compile DID PLC regex
 	ret = regcomp(&regexDid, VALID_PATTERN_DID_PLC, REG_EXTENDED | REG_ICASE );
     if ( ret != 0 ) return handleRegexError(ret, &regexDid, "DID");
 
@@ -348,6 +451,10 @@ int compileGlobalRegex( ) {
 	ret = regcomp(&regexFullHandle, VALID_PATTERN_FULL_HANDLE, REG_EXTENDED | REG_ICASE );
     if ( ret != 0 ) return handleRegexError(ret, &regexFullHandle, "Full Handle");	
 	
+	// Compile DID PLC regex
+	ret = regcomp(&regexDidPLC, DID_PLC_SPEC_PATTERN, REG_EXTENDED | REG_ICASE );
+    if ( ret != 0 ) return handleRegexError(ret, &regexDidPLC, "DID PLC Regex");		
+	
     return 0;  // Success
 }
 
@@ -358,7 +465,9 @@ void freeGlobalRegexes() {
     regfree(&regexHandle); // Free handle regex
     regfree(&regexLabel); // Free label regex
 	regfree(&regexFullHandle); // Free handle regex
+	regfree(&regexDidPLC); // Free handle regex	
 }
+
 
 // VALIDATOR FOR IDENTIFIER
 int validateDid(const char *did) {  // RETURNS KEY_VALID = 0 for successful validation
@@ -393,6 +502,31 @@ int validateLabel(const char *label) {  // RETURNS KEY_VALID = 0 for successful 
 	
     return KEY_VALID;
 }
+
+// EXTRACT THE FIRST DID FROM A GIVEN STRING
+void extractDid (const char *input, char *output, size_t output_size) {
+    regmatch_t match[1]; // Array to hold match result
+
+    // Execute the regex on the input string using global regexDidPLC
+    if (regexec(&regexDidPLC, input, 1, match, 0) == 0) {
+        // Match found, extract the substring
+        size_t start = match[0].rm_so; // Start of match
+        size_t end = match[0].rm_eo;   // End of match
+        size_t match_length = end - start;
+
+        if (match_length < output_size) {
+            strncpy(output, input + start, match_length);
+            output[match_length] = '\0'; // Null-terminate the output
+        } else {
+            fprintf(stderr, "Match is too large for the output buffer\n");
+        }
+    } else {
+        // No match found
+        fprintf(stderr, "No match found\n");
+        output[0] = '\0';
+    }
+}
+
 
 // REMOVE DOMAIN NAME FROM THE HOSTNAME
 // CALLER MUST FREE THE RETURNED POINTER
@@ -432,7 +566,7 @@ char* removeDomainName(const char *host) {
 // ***************************************************************************
 
 // OPEN A SPECIFIC DATABASE
-sqlite3 *openDatabase(const char *dbFile) {
+sqlite3 *databaseOpen(const char *dbFile) {
     sqlite3 *db = NULL;
 	
     if (sqlite3_open(dbFile, &db) != SQLITE_OK) {
@@ -445,7 +579,7 @@ sqlite3 *openDatabase(const char *dbFile) {
 }
 
 // PREPARE A SQL STATEMENT
-sqlite3_stmt *prepareSQLStatement (sqlite3 *db, const char *sql) {
+sqlite3_stmt *databasePrepareStatement (sqlite3 *db, const char *sql) {
 	sqlite3_stmt *stmt;
 	
 	if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
@@ -459,7 +593,7 @@ sqlite3_stmt *prepareSQLStatement (sqlite3 *db, const char *sql) {
 }
 
 // BIND KEY TO STATEMENT
-int bindKeyToSQLStatement(sqlite3_stmt *stmt, int index, const char *key, sqlite3 *db) {
+int databaseBindKey(sqlite3_stmt *stmt, int index, const char *key, sqlite3 *db) {
     if (sqlite3_bind_text(stmt, index, key, -1, SQLITE_STATIC) != SQLITE_OK) {
         fprintf(stderr, "ERROR: SQL Binding error for key %s: %s\n", key, sqlite3_errmsg(db));
         return SQLITE_ERROR; // Failure
@@ -467,21 +601,68 @@ int bindKeyToSQLStatement(sqlite3_stmt *stmt, int index, const char *key, sqlite
     return SQLITE_OK; // Success
 }
 
+// GENERIC FUNCTION TO QUERY A DATABASE FOR EXISTENCE OF A SPECIFIC VALUE
+int databaseGenericSingularQuery (const char *dbPath, const char *sql, const char *value) {
+    // OPEN DATABASE
+    sqlite3 *db = databaseOpen(dbPath);
+    if (!db) return HANDLE_ERROR;
+
+    // PREPARE SQL STATEMENT
+    sqlite3_stmt *stmt = databasePrepareStatement(db, sql);
+    if (!stmt) {
+        sqlite3_close(db);
+        return HANDLE_ERROR;
+    }
+
+    // BIND VALUE TO PREPARED SQL STATEMENT
+    if (databaseBindKey(stmt, 1, value, db) != SQLITE_OK) {
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        return HANDLE_ERROR;
+    }
+
+    // Execute the query
+    int rc = sqlite3_step(stmt);
+    int result;
+    if (rc == SQLITE_ROW) {
+        if (DEBUG_FLAG) printf("DEBUG: Value '%s' is active (isValueInTable)\n", value);
+        result = HANDLE_ACTIVE; // Exists
+    } else if (rc == SQLITE_DONE) {
+        if (DEBUG_FLAG) printf("DEBUG: Value '%s' is not active (isValueInTable)\n", value);
+        result = HANDLE_INACTIVE; // Does not exist
+    } else {
+        fprintf(stderr, "Error executing query: %s\n", sqlite3_errmsg(db));
+        result = HANDLE_ERROR; // Error
+    }
+
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+    return result;
+}
+
+
+// ***************************************************************************
+// BEGIN HANDLERD SPECIFIC DATABASE FUNCTIONS ********************************
+// ***************************************************************************
+
+
 // INITIALIZE DATABASE, RETURNS DATABASE_SUCCESS 0 IF SUCESSFUL, DATABASE_ERROR 1 IF IT FAILED.
 int initializeUserDatabase( ) {
 	char *err_msg = 0;
     int rc;
 	
-    sqlite3 *db = openDatabase(principalDatabaseGlobal);
+    sqlite3 *db = databaseOpen(principalDatabaseGlobal);
     if (!db) {
         return DATABASE_ERROR;
     }
 
 	// SQL COMMENTARY: ADDITIONAL INDEXING IS UNNECESSARY SINCE 'did' COLUMN IS UNIQUE
-	// VIEW THE INDEX LIST USING: PRAGMA index_list(userTable);
-    char *sqlCreateTable = "CREATE TABLE IF NOT EXISTS userTable ("
-                "handle TEXT PRIMARY KEY, "
+	// VIEW THE INDEX LIST USING: PRAGMA index_list(did_plc_users);
+    char *sqlCreateTable = "CREATE TABLE IF NOT EXISTS did_plc_users ("
+                "handle TEXT PRIMARY KEY, "				// HOST / HANDLE, e.g., 'myhandle.baysky.social'
 				"did TEXT NOT NULL UNIQUE, "
+				"label TEXT NOT NULL UNIQUE, "			// LABEL, e.g., 'myhandle'
+				"domain TEXT NOT NULL, "				// DOMAIN NAME, e.g., 'baysky.social'
                 "token TEXT NOT NULL, "
 				"email TEXT, "
 				"locked BOOLEAN DEFAULT 0, "
@@ -496,9 +677,9 @@ int initializeUserDatabase( ) {
         return DATABASE_ERROR;
     }
 
-	// #ifdef VERBOSE_FLAG
-	// printf("Principal user table ready: '%s'\n", principalDatabaseGlobal);
-	// #endif
+	#ifdef VERBOSE_FLAG
+	printf("Principal user table ready: '%s'\n", principalDatabaseGlobal);
+	#endif
 
     // CLOSE THE DATABASE
 	sqlite3_free(err_msg);
@@ -507,13 +688,14 @@ int initializeUserDatabase( ) {
 	return DATABASE_SUCCESS;
 }
 
+
 // INITIALIZE/REBUILD FILTER DATABASE
 // RETURNS DATABASE_SUCCESS 0 IF SUCESSFUL, DATABASE_ERROR 1 IF IT FAILED.
 int initializeFilterDatabase( ) {
 	char *err_msg = 0;
     int rc;
 	
-    sqlite3 *db = openDatabase( filterDatabaseGlobal );
+    sqlite3 *db = databaseOpen( filterDatabaseGlobal );
     if (!db) {
         return DATABASE_ERROR;
     }
@@ -534,7 +716,7 @@ int initializeFilterDatabase( ) {
 
     // Prepare the INSERT statement
     const char *sqlInsertWord = "INSERT INTO reservedHandleTable (word) VALUES (?);";
-    sqlite3_stmt *stmt = prepareSQLStatement (db, sqlInsertWord);	
+    sqlite3_stmt *stmt = databasePrepareStatement (db, sqlInsertWord);	
 	if (!stmt) {
 		fprintf(stderr, "Reserved Label Table Creation Failed: %s\n", err_msg);
 		return DATABASE_ERROR;
@@ -602,10 +784,6 @@ int initializeFilterDatabase( ) {
 }
 
 
-// ***************************************************************************
-// BEGIN HANDLERD SPECIFIC DATABASE FUNCTIONS ********************************
-// ***************************************************************************
-
 void freeNewRecordResult(newRecordResult *record) {
     if (record) {
         free(record->token);  // Free the token
@@ -613,8 +791,10 @@ void freeNewRecordResult(newRecordResult *record) {
     }
 }
 
+
 // TRY ADDING A NEW REPORT. RETURNS newRecordResult (result and token IF SUCCESSFUL). CONSIDER MAKING TOKEN INTO A POINTER.
-newRecordResult *addNewRecord (const char *handle, const char *did, const char *email) {
+// HANDLE IS HOST, LABEL IS SUBDOMAIN
+newRecordResult *addNewRecord (const char *handle, const char *label, const char *did, const char *email) {
 	newRecordResult *newRecord = malloc(sizeof(newRecordResult));
 	
 	if (!newRecord) {
@@ -627,19 +807,22 @@ newRecordResult *addNewRecord (const char *handle, const char *did, const char *
 
 	// ADD AN EMAIL DETAIL CHECKER HERE
 
-    if (!handle || !did ) {
+    if (!handle || !label || !did ) {
         newRecord->result = RECORD_NULL_DATA;
         return newRecord;
     }	
 
-    if (strlen(handle) == 0 || strlen(did) == 0) {
+    if ( strlen(handle) == 0 || strlen(label) == 0 || strlen(did) == 0 ) {
         newRecord->result = RECORD_EMPTY_DATA;
         return newRecord;
     }	
 	
 	// VALIDATION
-	if ( validateHandle(handle) == KEY_INVALID ) {
-		newRecord->result = RECORD_INVALID_HANDLE;
+	
+	// ADD HANDLE (HOST) VALIDATION, UNTIL THEN ASSUME IT IS OK
+	
+	if ( validateHandle(label) == KEY_INVALID ) {
+		newRecord->result = RECORD_INVALID_LABEL;
 		return newRecord;
 	}
 
@@ -652,24 +835,26 @@ newRecordResult *addNewRecord (const char *handle, const char *did, const char *
 	char tempToken[TOKEN_LENGTH + 1]; // +1 for the null terminator
 	generateSecureToken(tempToken);
 
-    sqlite3 *db = openDatabase(principalDatabaseGlobal);
+    sqlite3 *db = databaseOpen(principalDatabaseGlobal);
     if (!db) return newRecord;
 
     // SQL STATEMENT WITH PLACEHOLDERS FOR THE PARAMETERS
 	// ALL VALUES ARE NORMALIZED TO LOWERCASE EXCEPT FOR TOKEN
     const char *insertUserRecordSql = 
-        "INSERT INTO userTable (handle, did, token, email) "
-        "VALUES (LOWER(?), LOWER(?), ?, LOWER(?));";
+        "INSERT INTO did_plc_users (handle, did, label, domain, token, email) "
+        "VALUES (LOWER(?), LOWER(?), LOWER(?), LOWER(?), ?, ?);";
 
 	// PREPARE SQL STATEMENT
-    sqlite3_stmt *stmt = prepareSQLStatement (db, insertUserRecordSql);	
+    sqlite3_stmt *stmt = databasePrepareStatement (db, insertUserRecordSql);	
 	if (!stmt) return newRecord;
 
-    // Bind parameters to the prepared statement using bindKeyToSQLStatement
-    if (bindKeyToSQLStatement(stmt, 1, handle, db) != SQLITE_OK || bindKeyToSQLStatement(stmt, 2, did, db) != SQLITE_OK ||
-        bindKeyToSQLStatement(stmt, 3, tempToken, db) != SQLITE_OK || bindKeyToSQLStatement(stmt, 4, email, db) != SQLITE_OK)
+    // Bind parameters to the prepared statement using databaseBindKey
+    if (databaseBindKey(stmt, 1, handle, db) != SQLITE_OK || databaseBindKey(stmt, 2, did, db) != SQLITE_OK ||
+		databaseBindKey(stmt, 3, label, db) != SQLITE_OK || databaseBindKey(stmt, 4, domainName, db) != SQLITE_OK ||
+        databaseBindKey(stmt, 5, tempToken, db) != SQLITE_OK || databaseBindKey(stmt, 6, email, db) != SQLITE_OK)
 	{
-        sqlite3_finalize(stmt);
+		fprintf(stderr, "ERROR: Unable to prepare SQL statement: %s\n", sqlite3_errmsg(db));
+		sqlite3_finalize(stmt);
         sqlite3_close(db);
 		return newRecord;
 	}
@@ -700,83 +885,20 @@ newRecordResult *addNewRecord (const char *handle, const char *did, const char *
     return newRecord;
 }
 
-// QUERY DATABASE FOR EXISTANCE OF SPECIFIC 'handle'
-int handleRegistered (const char *handle) {
-	const char *sql = "SELECT 1 FROM userTable WHERE handle = ? LIMIT 1;";
-	
-	// OPEN DATABASE
-    sqlite3 *db = openDatabase(principalDatabaseGlobal);
-	if (!db) return HANDLE_ERROR;
 
-	// PREPARE SQL STATEMENT
-    sqlite3_stmt *stmt = prepareSQLStatement (db, sql);	
-	if (!stmt) return HANDLE_ERROR;
-
-	// BIND HANDLE KEY TO PREPARED SQL STATEMENT (1 IS SUCCESS)
-    if ( bindKeyToSQLStatement(stmt, 1, handle, db) != SQLITE_OK ) {
-        sqlite3_finalize(stmt);
-		sqlite3_close(db);
-        return HANDLE_ERROR;
-    }
-
-	// Execute the query
-	int rc = sqlite3_step(stmt);
-	if (rc == SQLITE_ROW) {
-		if (DEBUG_FLAG) printf("DEBUG: Handle '%s' is active.\n", handle);
-		sqlite3_finalize(stmt);
-		sqlite3_close(db);
-		return HANDLE_ACTIVE; // Exists
-	} else if (rc == SQLITE_DONE) {
-		if (DEBUG_FLAG) printf("DEBUG: Handle '%s' does not exist in the database.\n", handle);
-		sqlite3_finalize(stmt);
-		sqlite3_close(db);
-		return HANDLE_INACTIVE; // Does not exist
-	} else {
-		fprintf(stderr, "Error executing query: %s\n", sqlite3_errmsg(db));
-		sqlite3_finalize(stmt);
-		sqlite3_close(db);
-		return HANDLE_ERROR; // Error
-	}
+// QUERY PRINCIPAL DATABASE FOR EXISTENCE OF SPECIFIC 'handle' (FULL HOST NAME)
+int handleRegistered(const char *handle) {
+	const char *sql = "SELECT 1 FROM did_plc_users WHERE handle = ? LIMIT 1;";
+    return databaseGenericSingularQuery(principalDatabaseGlobal, sql, handle);
 }
 
-// QUERY DB TABLE RESERVED WORDS FOR SPECIFIC 'LABEL' 'handle'
-int labelReserved (const char *label) {
-	const char *sql = "SELECT 1 FROM reservedHandleTable WHERE word = ? LIMIT 1;";
 
-	// OPEN DATABASE
-    sqlite3 *db = openDatabase( filterDatabaseGlobal );
-	if (!db) return HANDLE_ERROR;
-
-	// PREPARE SQL STATEMENT
-    sqlite3_stmt *stmt = prepareSQLStatement (db, sql);	
-	if (!stmt) return HANDLE_ERROR;
-
-	// BIND LABEL KEY TO PREPARED SQL STATEMENT (1 IS SUCCESS)
-    if ( bindKeyToSQLStatement(stmt, 1, label, db) != SQLITE_OK ) {
-        sqlite3_finalize(stmt);
-		sqlite3_close(db);
-        return HANDLE_ERROR;
-    }
-
-	// Execute the query
-	int rc = sqlite3_step(stmt);
-	if (rc == SQLITE_ROW) {
-		if (DEBUG_FLAG) printf("DEBUG: Label '%s' is a restricted word.\n", label);
-		sqlite3_finalize(stmt);
-		sqlite3_close(db);
-		return HANDLE_ACTIVE; // Exists
-	} else if (rc == SQLITE_DONE) {
-		if (DEBUG_FLAG) printf("DEBUG: Label '%s' is not a restricted word .\n", label);
-		sqlite3_finalize(stmt);
-		sqlite3_close(db);
-		return HANDLE_INACTIVE; // Does not exist
-	} else {
-		fprintf(stderr, "Error executing query: %s\n", sqlite3_errmsg(db));
-		sqlite3_finalize(stmt);
-		sqlite3_close(db);
-		return HANDLE_ERROR; // Error
-	}
+// QUERY FILTER DATABASE FOR EXISTENCE OF SPECIFIC 'word' (LABEL/SUBDOMAIN)
+int labelReserved(const char *word) {
+    const char *sql = "SELECT 1 FROM reservedHandleTable WHERE word = ? LIMIT 1;";
+    return databaseGenericSingularQuery(filterDatabaseGlobal, sql, word);
 }
+
 
 // QUERY DATABASE FOR A VALID IDENTIFIER ASSOCIATED WITH HANDLE
 const char* queryForDid (const char *handle) {
@@ -785,16 +907,16 @@ const char* queryForDid (const char *handle) {
 	#endif	
 
 	// OPEN DATABASE
-    sqlite3 *db = openDatabase(principalDatabaseGlobal);
+    sqlite3 *db = databaseOpen(principalDatabaseGlobal);
 	if (!db) return NULL;
 
 	// PREPARE SQL STATEMENT
-    const char *sql = "SELECT did FROM userTable WHERE handle = ?";
-    sqlite3_stmt *stmt = prepareSQLStatement (db, sql);	
+    const char *sql = "SELECT did FROM did_plc_users WHERE handle = ?";
+    sqlite3_stmt *stmt = databasePrepareStatement (db, sql);	
 	if (!stmt) return NULL;
 
 	// BIND HANDLE KEY TO PREPARED SQL STATEMENT (1 IS SUCCESS)
-    if ( bindKeyToSQLStatement(stmt, 1, handle, db) != SQLITE_OK ) {
+    if ( databaseBindKey(stmt, 1, handle, db) != SQLITE_OK ) {
         sqlite3_finalize(stmt);
 		sqlite3_close(db);
         return NULL;
@@ -830,26 +952,6 @@ const char* queryForDid (const char *handle) {
 // ********* SERVER FUNCTIONS *********
 // ************************************
 
-// SEND RESPONSE WITH SPECIFIC CONTENT-TYPE HEADER
-static enum MHD_Result sendResponse (struct MHD_Connection *connection, const char *content, const char *contentType)
-{
-	enum MHD_Result ret;
-	struct MHD_Response *response;
-
-	response = MHD_create_response_from_buffer (strlen (content), (void *) content, MHD_RESPMEM_PERSISTENT);
-	if (! response) return MHD_NO;
-
-	// Add content type header to response
-	if (contentType != NULL) MHD_add_response_header(response, "Content-Type", contentType);
-
-	// Queue the response
-	ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
-
-	// Clean up
-	MHD_destroy_response(response);
-
-	return ret;
-}
 
 // SENDS AN HTML ERROR RESPONSE WITH A CUSTOM MESSAGE
 // TO DO: MAKE SURE THE STATIC_ERROR IS A ABSOLUTE PATH
@@ -928,16 +1030,16 @@ static enum MHD_Result sendFileResponse (struct MHD_Connection *connection, cons
 
 // SEND THE RESPONSE TO THE WELL-KNOWN DID PLC METHOD
 // TO DO: CHANGE FROM LABEL/SEGMENT TO FULL HANDLE
-static enum MHD_Result sendWellKnownResponse (struct MHD_Connection *connection, const char *label)
+static enum MHD_Result sendWellKnownResponse (struct MHD_Connection *connection, const char *handle)
 {
 	// QUERY DATABASE FOR *VALID* DID PLC ASSOCIATED WITH 'label'
-	const char *tempDid = queryForDid(label);
+	const char *tempDid = queryForDid(handle);
 	struct MHD_Response *response;
 	enum MHD_Result ret;
 	
 	if (tempDid != NULL ) { 
 		// CONFIRM DID EXISTS AND SEND IT AS PLAIN TEXT
-       if (DEBUG_FLAG) printf("DEBUG: Found DID for label '%s': %s\n", label, tempDid);	
+       if (DEBUG_FLAG) printf("DEBUG: Found DID for handle '%s': %s\n", handle, tempDid);	
 	
 	     // MHD TAKES OWNERSHIP OF tempDid AND WILL FREE IT   
 		// response = MHD_create_response_from_buffer (strlen (tempDid), (void *)tempDid, MHD_RESPMEM_MUST_COPY);
@@ -957,7 +1059,7 @@ static enum MHD_Result sendWellKnownResponse (struct MHD_Connection *connection,
 	}
 
     // HANDLE CASE WHERE DID IS NOT FOUND	
-    if (DEBUG_FLAG) printf("DEBUG: DID not found for label '%s'. Sending 404 response.\n", label);
+    if (DEBUG_FLAG) printf("DEBUG: DID not found for handle '%s'. Sending 404 response.\n", handle);
 	
 	response = MHD_create_response_from_buffer (strlen (userNotFoundPage), (void *)userNotFoundPage, MHD_RESPMEM_PERSISTENT);	
 	if (!response) return MHD_NO;
@@ -971,24 +1073,19 @@ static enum MHD_Result sendWellKnownResponse (struct MHD_Connection *connection,
 
 // SEND THE RESPONSE TO A NEW USER REQUEST
 // TO DO: CHANGE FROM LABEL/SEGMENT TO FULL HANDLE
-static enum MHD_Result sendNewUserResponse (struct MHD_Connection *connection, const char *label, const char *did, const char *email)
+static enum MHD_Result sendNewUserResponse (struct MHD_Connection *connection, const char *handle, const char *label, const char *did, const char *email)
 {
-	if ( !label || !did || !email )
+	if ( !handle || !label || !did || !email )
 	{
 		fprintf(stderr, "ERROR: Incomplete user information (sendNewUserResponse)\n");
 		return MHD_NO; // SIGNAL PROCESSING INFORMATION
 	}
 
 	#ifdef VERBOSE_FLAG
-	printf("RESPONSE: New Record Attempt for: handle=%s, did=%s, email=%s\n", label, did, email);
+	printf("RESPONSE: New Record Attempt for: handle=%s, label=%s, did=%s, email=%s\n", handle, label, did, email);
 	#endif
 
-	enum MHD_Result ret;
-	struct MHD_Response *response;
-	char *htmlContent;	
-	char *responseContent;
-
-	newRecordResult *record = addNewRecord(label, did, email);
+	newRecordResult *record = addNewRecord(handle, label, did, email);
 	if (!record)
 	{
 		fprintf(stderr, "ERROR: Unable to create new record result (sendNewUserResponse)\n");
@@ -998,33 +1095,42 @@ static enum MHD_Result sendNewUserResponse (struct MHD_Connection *connection, c
 	if ( record->result != RECORD_VALID)
 	{
 		printf("ERROR: Unable to create new user record.\n"); //DEBUG
+		const char *errorMessage;
 		
 		switch (record->result) {
 			case RECORD_INVALID_DID:
-				return sendErrorResponse (connection, ERROR_INVALID_DID);
-			break;		
-			case RECORD_INVALID_LABEL:
-				return sendErrorResponse (connection, ERROR_INVALID_LABEL);
-			break;
+				errorMessage = ERROR_INVALID_DID;
+				break;		
 			case RECORD_INVALID_HANDLE:
-				return sendErrorResponse (connection, ERROR_INVALID_HANDLE);	
-			break;
+				errorMessage = ERROR_INVALID_HANDLE;
+				break;
+			case RECORD_INVALID_LABEL:
+				errorMessage = ERROR_INVALID_LABEL;
+				break;			
 			case RECORD_NULL_DATA:  // CONSOLIDATED HANDLING
 			case RECORD_EMPTY_DATA:
-				return sendErrorResponse (connection, ERROR_NULL_OR_EMPTY_DATA);	
-			break;
+				errorMessage = ERROR_NULL_OR_EMPTY_DATA;
+				break;
 			case RECORD_ERROR_DATABASE:
-				return sendErrorResponse (connection, ERROR_DATABASE);	
-			break;
+				errorMessage = ERROR_DATABASE;
+				break;
 			default:
-				return sendErrorResponse (connection, "ERROR: Unknown validation result.");	
-			break;
+				errorMessage = "ERROR: Unknown validation result.";	
+				break;
 		}
+		
+		freeNewRecordResult(record);
+		return sendErrorResponse (connection, errorMessage);
 	}
 		
 	#ifdef VERBOSE_FLAG
 	printf("RESPONSE: New Record Created, token: %s\n", record->token);
 	#endif
+	
+	enum MHD_Result ret;
+	struct MHD_Response *response;
+	char *htmlContent;	
+	char *responseContent;	
 	
 	htmlContent = readFile(STATIC_SUCCESS);
 	if (!htmlContent) {
@@ -1078,38 +1184,77 @@ static enum MHD_Result iteratePost	(void *coninfo_cls, enum MHD_ValueKind kind, 
   (void) transfer_encoding;  /* Unused. Silent compiler warning. */
   (void) off;                /* Unused. Silent compiler warning. */
   
-	if (DEBUG_FLAG) printf("DEBUG: Begin iteratePost: key=%s, data=%s\n", key, data);
-	if (DEBUG_FLAG) printf("connection: handle=%s, did=%s, email=%s\n", con_info->handle, con_info->did, con_info->email);
-
-	if ( validateHandle (con_info->handle) ==  KEY_INVALID ) {
-		if (DEBUG_FLAG) printf("DEBUG: Invalid iteratePost handle value, exiting: '%s'\n", con_info->handle);
-		con_info->answerstring = invalidHandlePage;
-		return MHD_NO;
-	}
-  
-	// THIS KEY IS A GENERAL DID:PLC FIELD WITH EITHER A DID OR A FULL HANDLE. ONLY NEED TO MAKE SURE IT EXISTS AND THAT IT IS >0
+	// THIS KEY IS A GENERAL DID:PLC FIELD WITH EITHER A DID OR A FULL HANDLE. ONLY NEED TO MAKE SURE IT EXISTS AND THAT IT IS <= MAXDIDSIZE
   	if ( strcmp(key, "did") == 0 ) {
-		if ( (size > 0) && (size <= MAXDIDSIZE) )  
-		{
-			con_info->did = strndup(data, size);
-			return MHD_YES; // Iterate again looking for email.
-		} else
-		{
-			printf("No DID:PLC Data Entered, exiting\n"); // NO DATA ENTERED
-			con_info->answerstring = noResponsePage;
+        printf("POST: DID key value: %s\n", data);
+		
+		// BASIC SIZE SANITY CHECK: (14-254 chars)
+		if (size > 14 && size <= DATA_MAX_SIZE) {
+			printf("POST: Data entered could contain valid DID:PLC or handle: '%s'\n", data);
+
+			if (strcasestr(data, "bsky.social")) {
+				printf("POST: Valid 'bsky.social' handle entered: %s\n", data);		
+				const char *tempDID = getWellKnownDID(data);
+				if (tempDID) {
+					printf("POST: DID:PLC found via CURL: %s\n", tempDID);
+					con_info->did = strndup(tempDID, MAX_SIZE_DID_PLC);
+					free((void *)tempDID);
+					return MHD_YES; // Iterate again looking for email.
+				}
+				printf("POST: No Valid DID:PLC found via CURL: '%s'\n", data);
+				return MHD_NO;
+			}
+
+			char output[MAX_SIZE_DID_PLC + 1] = {0};
+			extractDid(data, output, sizeof(output));
+			if (output[0] != '\0') {
+				printf("POST: Valid DID:PLC found in data: '%s'\n", output);
+				con_info->did = strndup(output, strlen(output));
+				return MHD_YES;
+			}
+			printf("POST: No valid DID:PLC or handle found in data: '%s'\n", data);
 			return MHD_NO;
 		}
+		
+		
+/* 		// BASIC SIZE SANITY CHECK: (14-254 chars)
+		if ( size > 14 && size <= DATA_MAX_SIZE )
+		{					
+			printf("POST: Data entered could contain valid DID:PLC or handle: '%s'\n", data); 
+			if ( NULL != strcasestr(data, "bsky.social") ) // NOT NULL MEANS data INCLUDES "bsky.social"
+			{
+				const char *tempDID = getWellKnownDID (data);
+				if (tempDID) { // Check if DID is not NULL
+					printf("POST: Received Handle: %s\n", data);
+					printf("POST: CURL Response: %s\n", tempDID);
+					con_info->did = strndup(tempDID, MAX_SIZE_DID_PLC);
+					free((void *)tempDID);
+					return MHD_YES; // Iterate again looking for email.
+				} else
+				{
+					// DO I NEED TO FREE tempDID HERE?
+					printf("POST: No Valid DID:PLC found via CURL: '%s'\n", data);
+					return MHD_NO; // included bsky.social was unable to be resolved into a valid DID.
+				}
+			} else
+			{
+				char output[MAX_SIZE_DID_PLC + 1];
+				extractDid(data, output, sizeof(output));
+				if (output[0] != '\0') {
+					printf("POST: Valid DID:PLC found in data: '%s'\n", output);
+					con_info->did = strndup(output, sizeof(output));
+					return MHD_YES; // Iterate again looking for email.
+				} else {			
+					printf("POST: No Valid DID:PLC found in data: '%s'\n", data); 
+					return MHD_NO;
+				}
+			}
+		} */
 	}
-	
-	if ( (NULL != con_info->did) && (strcmp(key, "email") == 0) && (size <= MAXDIDSIZE) ) {
-		if ( size == 0 ) {
-			char *emailDeclinedString = "NO EMAIL PROVIDED";
-			con_info->email = strndup(emailDeclinedString, strlen(emailDeclinedString));
-			return MHD_YES;
-		} else {
-			con_info->email = strndup(data, size);
-			return MHD_YES;
-		}
+
+	if ( (strcmp(key, "email") == 0) && (size <= 256 ) ) {
+		if ( (data != NULL) && (size > 0) )  con_info->email = strndup(data, size);		
+		return MHD_NO;			
 	}
 
 	return MHD_YES;
@@ -1164,33 +1309,19 @@ static void requestCompleted (void *cls, struct MHD_Connection *connection, void
 // ********* PRINCIPAL REQUEST HANDLER *********
 // *********************************************
 
-
-static enum MHD_Result
-print_out_key (void *cls, enum MHD_ValueKind kind, const char *key,
-               const char *value)
-{
-  (void) cls;    /* Unused. Silent compiler warning. */
-  (void) kind;   /* Unused. Silent compiler warning. */
-  printf ("%s: %s\n", key, value);
-  return MHD_YES;
-}
-
-
-
 static enum MHD_Result requestHandler	   (void *cls, struct MHD_Connection *connection,
 												const char *url, const char *method,
 												const char *version, const char *upload_data,
 												size_t *upload_data_size, void **con_cls)
 {
-	printf ("New %s request for %s using version %s\n", method, url, version);	
-	// MHD_get_connection_values (connection, MHD_HEADER_KIND, print_out_key, NULL);
+	printf ("*****************************************************\n");	
+	printf ("REQUEST: New %s request for %s using version %s\n", method, url, version);	
 	
 	(void) cls;               /* Unused. Silent compiler warning. */
 	//(void) version;           /* Unused. Silent compiler warning. */
 	
 	if (NULL == *con_cls) { // FIRST CALL, SETUP DATA STRUCTURES, SOME ONLY APPLY TO 'POST' REQUESTS
-		printf ("IF CONDITION: con_cls is null\n\n"); // TEST
-		
+	
 		// VALIDATE HOST HEADER. A REVERSE PROXY SHOULD MAKE THIS UNNECESSARY
 		const char *hostHeader = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Host");		
 		if (!hostHeader || (NULL == strcasestr(hostHeader, domainName))) {			
@@ -1243,7 +1374,6 @@ static enum MHD_Result requestHandler	   (void *cls, struct MHD_Connection *conn
 
 		*con_cls = (void *) con_info;
 
-		printf("MHD_YES: con_info: host=%s, handle=%s, connectiontype=%d\n\n", con_info->host, con_info->handle, con_info->connectiontype);
 		return MHD_YES; // QUITE CERTAIN THIS IS NOT NECESSARY FOR GETS
 	}
 
@@ -1258,12 +1388,12 @@ static enum MHD_Result requestHandler	   (void *cls, struct MHD_Connection *conn
 		// HANDLE/SUBDOMAIN VERIFICATION NOT NECESSARY
 		if ( 0 == strcasecmp (url, URL_WELL_KNOWN_ATPROTO) )
 		{
-			return sendWellKnownResponse (connection, con_info->handle);
+			return sendWellKnownResponse (connection, con_info->host);
 		}
 		
 		if ( (0 == strcasecmp (url, "/")) && (validateHandle (con_info->handle) ==  KEY_VALID ) ) {
 			// CREATE A NEW RESPONSE PAGE FOR THIS BLOCK
-			if ( (handleRegistered(con_info->handle) == HANDLE_ACTIVE) ) return sendFileResponse (connection, STATIC_ACTIVE, CONTENT_HTML);
+			if ( (handleRegistered(con_info->host) == HANDLE_ACTIVE) ) return sendFileResponse (connection, STATIC_ACTIVE, CONTENT_HTML);
 			if ( (labelReserved(con_info->handle) == HANDLE_ACTIVE) ) return sendFileResponse (connection, STATIC_RESERVED, CONTENT_HTML); 
 			return sendFileResponse (connection, STATIC_REGISTER, CONTENT_HTML); 
 		}
@@ -1277,18 +1407,33 @@ static enum MHD_Result requestHandler	   (void *cls, struct MHD_Connection *conn
 	// ***************************************	
 	if (0 == strcasecmp (method, MHD_HTTP_METHOD_POST))	
 	{
-		// Checks to see if all data has been received from iterative POST requests
-		if (*upload_data_size != 0)
+		// THIS VALIDATION IS PROBABLY UNNECESSARY SINCE IT IS PRINCIPALLY ABOUT LENGTH
+		// if ( validateHandle (con_info->handle) ==  KEY_INVALID ) {
+			// return sendErrorResponse (connection, ERROR_INVALID_LABEL);	
+		// }
+		
+		if ( 0 != *upload_data_size )
 		{
-			MHD_post_process (con_info->postprocessor, upload_data, *upload_data_size);
+			MHD_post_process (con_info->postprocessor, upload_data, *upload_data_size);		
 			*upload_data_size = 0;
 			return MHD_YES;
+		} 
+		
+		if ( con_info->did == NULL ) return sendErrorResponse (connection, "DID or Bluesky handle invalid, try again");
+		
+		
+		if ( con_info->did != NULL && con_info->email != NULL )
+		{
+			return sendNewUserResponse (connection, con_info->host, con_info->handle, con_info->did, con_info->email);
 		}
 		
-		if ( con_info->did && con_info->email )
-		{ 
-			return sendNewUserResponse (connection, con_info->handle, con_info->did, con_info->email);	
+		if ( con_info->did != NULL  && con_info->email == NULL )
+		{
+			return sendNewUserResponse (connection, con_info->host, con_info->handle, con_info->did, "NO EMAIL PROVIDED");
 		}
+
+		// ALL OTHER POST REQUESTS GET A MHD_NO
+		// return MHD_NO;
 	}
 
 	// GENERAL ERROR MESSAGE

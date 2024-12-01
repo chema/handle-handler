@@ -1,9 +1,10 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en-US">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Handlerd: Manage Subdomain Handles for AT Protocol/Bluesky</title>
+    <meta name="description" content="Easily manage your custom handles for AT Protocol/Bluesky. Register with your Bluesky DID.">
+    <title>Register Your Custom baysky.social Handle</title>
     <style>
         body {
             font-family: 'Arial', sans-serif;
@@ -18,7 +19,7 @@
         }
         .container {
             background: white;
-            padding: 30px;
+            padding: 20px;
             border-radius: 8px;
             box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
             width: 100%;
@@ -26,14 +27,18 @@
             text-align: center;
         }
         h1 {
-            font-size: 1.8rem;
+            font-size: 1.3rem;
             margin-bottom: 20px;
             color: #2b3d4f;
+			line-height: 1.5;
         }
         p {
             font-size: 1rem;
             color: #666;
             margin-bottom: 20px;
+			line-height: 1.5;
+            text-align: justify;
+			white-space: normal;
         }
         a {
             color: #0077cc;
@@ -59,34 +64,66 @@
             font-size: 1.1rem;
             cursor: pointer;
             width: 100%;
+            transition: background-color 0.3s, transform 0.2s;
         }
         form input[type="submit"]:hover {
             background-color: #005fa3;
+            transform: translateY(-2px);
         }
         .footer {
-            font-size: 0.9rem;
+            font-size: 0.8rem;
             color: #888;
             margin-top: 20px;
+            text-align: center;
         }
         .footer i {
             font-style: italic;
         }
+		.domain-name {
+			color: #0077cc;
+			font-family: 'Courier New', Courier, monospace;
+			background-color: #f1f8ff;
+			padding: 0 4px;
+			border-radius: 3px;
+			word-break: break-word;
+			overflow-wrap: anywhere;
+		}
+        @media (max-width: 600px) {
+            .container {
+                padding: 15px;
+            }
+            h1 {
+                font-size: 1.2rem;
+            }
+            form input[type="text"] {
+                padding: 10px;
+            }
+            form input[type="submit"] {
+                font-size: 1rem;
+            }
+        }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>BlueSky Handle Registration</h1>
-        <p>This baysky.social subdomain is available for use as a handle on Bluesky. Enter your Bluesky DID below if want to use it as your handle over there.</p>
-        <form action="/result" method="post">
-            <input name="did" type="text" placeholder="Enter your Bluesky DID without the 'did='" required>
-            <input name="email" type="text" placeholder="Email (optional, but useful to keep up to date with baysky.social community)">
-            <input type="submit" value="Register">
-        </form>
-        <p>Questions? Message me in the fedi at <a href="https://ctrvx.net/chema" target="_blank">@chema@ctrvx.net</a>.</p>
-        <p>Check out the <a href="https://bsky.app/profile/did:plc:7wm5b6dzk54ukznrxdlpp23f/feed/aaac5vicl4pww" target="_blank">Baysky Feed</a> and feel free to <a href="https://ko-fi.com/chemahg" target="_blank">get me a coffee</a>.</p>
-        <p class="footer"><i>Terms: This free service is provided at my sole discretion and availability and may be modified, suspended, or discontinued at any time without prior notice (but it probably will not). Only for personal use. If you want to use it for your business, ask me first. Handles and DIDs are always public.</i></p>
-		<p class="footer"><a href="https://github.com/chema/handle-handler" target="_blank">Source code available here.</a></p>
-		
-    </div>
+<div class="container">
+    <h1>You can be <span id="domain-name">baysky.social subdomain</span>!</h1>
+    <p>Enter your current Bluesky handle (e.g., <span id="bsky-handle" class="domain-name">handle.bsky.social</span>) or <span class="domain-name">DID</span> to associate <span id="domain-name-2" class="domain-name">this baysky.social subdomain</span> with it, then follow <a href="https://bsky.social/about/blog/4-28-2023-domain-handle-tutorial" target="_blank" rel="noopener noreferrer">the official instructions here</a>.</p>
+    <form action="/result" method="post">
+        <input id="did" name="did" type="text" placeholder="Your current bsky.social handle or DID (required)" autofocus>
+        <input id="email" name="email" type="text" placeholder="Email (optional)">
+        <input type="submit" value="Register My Baysky Handle">
+    </form>
+    <p>Feel free to <a href="https://ko-fi.com/chemahg" target="_blank" rel="noopener noreferrer">get me a coffee</a> to cover hosting and development costs.</p>
+    <p class="footer"><i><a href="https://baysky.social/terms.html" target="_blank" rel="noopener noreferrer">Service Terms and Conditions</a></i></p>
+</div>
+<script>
+    const newHandle = window.location.hostname;
+    const firstPart = newHandle.split('.')[0];
+    const bskyHandle = `@${firstPart}.bsky.social`;
+	const bayskyHandle = `@${newHandle}`;
+    document.getElementById('bsky-handle').textContent = bskyHandle;
+    document.getElementById('domain-name').textContent = bayskyHandle;
+    document.getElementById('domain-name-2').textContent = bayskyHandle;
+</script>
 </body>
 </html>
