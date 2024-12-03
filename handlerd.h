@@ -7,7 +7,10 @@
 #include <curl/curl.h>
 #include <ctype.h>
 
-#define PORT            8123
+#ifndef PORT
+#define PORT 8123  		// Default port for production
+#endif
+
 #define POSTBUFFERSIZE  1024
 
 #define URL_WELL_KNOWN_ATPROTO 			"/.well-known/atproto-did"
@@ -70,13 +73,17 @@
 #define INVALID_HANDLE  		2
 #define INVALID_LABEL			3
 #define RECORD_DATABASE_ERROR	4
+#define DUPLICATE_RECORD		5
 
 #define ERROR_INVALID_DID "Error: Invalid DID."
 #define ERROR_INVALID_LABEL "Error: Invalid label."
 #define ERROR_INVALID_HANDLE "Error: Invalid handle."
 #define ERROR_NULL_OR_EMPTY_DATA "Error: Data is null or empty."
 #define ERROR_DATABASE "Error: Database operation failed."
+#define ERROR_DUPLICATE_DATA "Error: Duplicate record found, unable to process."
 #define ERROR_REQUEST_FAILED "Error: Request failed."
+
+#define ERROR_INVALID_DID_ENTERED "The bsky.social handle or DID you entered appears to be invalid. Please double-check it and try again. If the issue persists, ensure the handle is active and properly set up."
 
 // TYPES OF CONNECTIONS ACCEPTED.
 enum connectionType {
@@ -106,7 +113,8 @@ typedef enum {
 	RECORD_INVALID_HANDLE,
 	RECORD_NULL_DATA,
 	RECORD_EMPTY_DATA,
-	RECORD_ERROR_DATABASE
+	RECORD_ERROR_DATABASE,
+	RECORD_ERROR_DUPLICATE_DATA
 } validatorResult;
 
 typedef struct {

@@ -25,23 +25,52 @@
             max-width: 500px;
         }
         h1 {
-            color: #5bc0de;
-        }
-        .message {
-            margin-top: 20px;
-            font-size: 1.1em;
-            color: #555;
+            font-size: 1.3rem;
+            margin-bottom: 20px;
+            color: #2b3d4f;
 			line-height: 1.5;
         }
-        .token {
-            margin-top: 20px;
-            background-color: #e9ecef;
-            padding: 15px;
-            border-radius: 5px;
-            font-size: 1em;
-            color: #343a40;
+        p, li {
+            font-size: 1.1rem;
+            color: #666;
+            margin-bottom: 10px;
+			line-height: 1.4;
+			text-align: justify;
         }
-        a {
+		p img {
+		  height: 1em;
+		  vertical-align: middle;
+		}
+         .message {
+            margin-top: 20px;
+            font-size: 1.1em;
+            color: #666;
+			line-height: 1.4;
+			text-align: center;
+        }
+		.token {
+			margin-top: 15px;
+			background-color: #e9ecef;
+			padding: 15px;
+			border-radius: 5px;
+			font-size: .9em;
+			color: #343a40;
+			text-align: center; /* Horizontally centers the text */
+			display: flex; /* Enables flexbox for centering */
+			flex-direction: column; /* Stacks child elements vertically */
+			justify-content: center; /* Vertically centers content */
+			align-items: center; /* Horizontally centers content */
+		}
+		.domain-name {
+			color: #0077cc;
+			font-family: 'Courier New', Courier, monospace;
+			background-color: #f1f8ff;
+			padding: 0 4px;
+			border-radius: 3px;
+			word-break: break-word;
+			overflow-wrap: anywhere;
+		}
+			a {
             color: #007bff;
             text-decoration: none;
         }
@@ -57,14 +86,25 @@
 </head>
 <body>
     <div class="container">
-        <h1>Success!</h1>
-        <p class="message">This handle is now associated with your Bluesky account. Finish the process on <a href="https://bsky.app/settings/account" target="_blank">your Bluesky account page</a>.</p>
+        <h1><span id="new_handle" class="domain-name">This handle</span> is all set!</h1>
+		<p>Now it's time to let Bluesky know about your new handle:</p>
+		<ol>
+		  <li>Open your <a href="https://bsky.app/settings/account" target="_blank">Bluesky account settings</a>.</li>
+		  <li>Select <img src="https://baysky.social/img/handle.jpg" alt="@ Handle" style="height: 1.2em; display: inline; vertical-align: middle;">, then click <img src="https://baysky.social/img/myowndomain.jpg" alt="I have my own domain" style="height: 1.2em; display: inline; vertical-align: middle;"></li>
+		  <li>Enter your new <span id="new_handle2" class="domain-name">baysky.social</span> handle.</li>
+		  <li>Finally, click <img src="https://baysky.social/img/verify.jpg" alt="Verify Text File" style="height: 1.1em; display: inline; vertical-align: middle;"> in the <em>No DNS Panel</em> section—that's it!</li>
+		</ol>		
         <div class="token">
-            <h3>Your Security Token:</h3>
+            <h3>Your Access Token:</h3>
             <p>{{ TOKEN }}</p>
-            <p><i>Please save this token as you will need it to dissociate your Bluesky account from this handle (coming soon!). You can also just message me.</i></p>
+            <p><i>Please save this token as you will need it to dissociate your Bluesky account from this handle.</i></p>
         </div>
-        <p class="message"><a href="https://bsky.app/profile/baysky.social/feed/aaac5vicl4pww">Baysky Feed</a></p>
     </div>
+<script>
+    const newHandle = window.location.hostname || "baysky.social";
+	const bayskyHandle = `@${newHandle}`;
+    document.getElementById('new_handle').textContent = bayskyHandle;
+    document.getElementById('new_handle2').textContent = bayskyHandle;
+</script>
 </body>
 </html>

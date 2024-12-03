@@ -41,7 +41,6 @@ const char *principalDatabaseGlobal = NULL;
 #define PLACEHOLDER_ERROR "{{ ERROR }}"
 #define PLACEHOLDER_TOKEN "{{ TOKEN }}"
 
-
 // GLOBAL COMPILED REGEX
 regex_t regexDid;
 regex_t regexHandle;
@@ -65,7 +64,7 @@ struct connectionInfoStruct
 	const char *email;
 	
 	// HTTP RESPONSE BODY WE WILL RETURN, NULL IF NOT YET KNOWN.
-	const char *answerstring;
+	// const char *answerstring;
 
 	// HTTP STATUS CODE WE WILL RETURN, 0 FOR UNDECIDED.
 	// unsigned int answercode;
@@ -81,28 +80,8 @@ struct curlResponse {
 // BEGIN HARD CODED HTML CODE ************************************************
 // ***************************************************************************
 
-// TO DO: REPLACE HARD CODED DOMAIN NAME
-const char *landingPage =
-"<html><body>\
-<p>This subdomain is available as a handle. Enter your Bluesky DID if you want it associated with it.</p>\
-<form action=\"/result\" method=\"post\">\
-BluesSky DID: <input name=\"did\" type=\"text\" required><br>\
-Email (optional): <input name=\"email\" type=\"text\"><br>\
-<input type=\"submit\" value=\" Send \"></form><br>\
-<p>Message me in the fediverse if you have any questions <a href=\"https://ctrvx.net/chema\" target=\"_blank\">@chema@ctrvx.net.</a></p>\
-<p>Check out the <a href=\"https://bsky.app/profile/did:plc:7wm5b6dzk54ukznrxdlpp23f/feed/aaac5vicl4pww\" target=\"_blank\">Baysky Feed</a> and feel free to <a href=\"https://ko-fi.com/chemahg\" target=\"_blank\">get me a coffee.</a></p>\
-<p><i>Terms: This free service is provided at my sole discretion and availability and may be modified, suspended, or discontinued at any time without prior notice. Not for commercial use. The database may be stolen, corrupted or destroyed but handles and DIDs are always public. </i></p>\
-</body></html>";
-
-const char *confirmationPage = "<html><body><p>The subdomain has been succesfully associated with your DID.</p><p>You control token is %s. Save it, you will need it to delete this record!</p></body></html>";
-
 // NO DID PLC Response Received
-const char *noResponsePage = "<html><body>You did not enter any information. Enter your DID without the 'did=' at the beginning.</body></html>";
 const char *userNotFoundPage = "<html><head></head><body>User not found</body></html>";
-
-// HANDLE RECEIVED IS NOT VALID
-const char *invalidHandlePage = "<html><body>Handle requested is not valid.</body></html>";
-const char *notFoundResponsePage = "<html><body>404 Error: Requested content is not available.</body></html>";
 
 // ***************************************************************************
 // END HARD CODED HTML CODE **************************************************
@@ -180,7 +159,7 @@ const char *getWellKnownDID (const char *handle)
 {
     CURL *curl;
     CURLcode res;
-	char url[URL_MAX_SIZE]; // WHAT IS THE MAX SIZE?
+	char url[URL_MAX_SIZE];
     char errbuf[CURL_ERROR_SIZE];
 	const char *DID = NULL;
     struct curlResponse response = {NULL, 0};
@@ -192,24 +171,23 @@ const char *getWellKnownDID (const char *handle)
         return NULL;
     }
 	
-    // PROVIDE A BUFFER TO STORE ERRORS IN
+    // CREATE AND PREP AN ERROR BUFFER
     curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, errbuf);
-	 
-    // SET THE ERROR BUFFER AS EMPTY BEFORE PERFORMING A REQUEST
-    errbuf[0] = 0;
+    errbuf[0] = '\0';
 
     // Construct the URL using the URL_WELL_KNOWN
     snprintf(url, sizeof(url), _URL_WELL_KNOWN_, handle);
-	if (snprintf(url, sizeof(url), _URL_WELL_KNOWN_, handle) >= sizeof(url)) {
+	// CASTING return value of snpritf to size_t
+	if ((size_t)snprintf(url, sizeof(url), _URL_WELL_KNOWN_, handle) >= sizeof(url)) {
         fprintf(stderr, "CURL: URL is too long\n");
         curl_easy_cleanup(curl);
         return NULL;
     }
 
-   // Set curl options
-	curl_easy_setopt(curl, CURLOPT_URL, url);                  			// URL to fetch
-	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlReceiveData );	// Callback function to store data
-	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);      			// Pass the response struct
+   // SET CURL OPTIONS
+	curl_easy_setopt(curl, CURLOPT_URL, url);                  			// URL TO FETCH
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlReceiveData );	// CALLBACK FUNCTION TO STORE DATA
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);      			// PASS THE RESPONSE STRUCT
 
 	// PERFORM THE FILE TRANSFER
 	res = curl_easy_perform(curl);
@@ -219,10 +197,20 @@ const char *getWellKnownDID (const char *handle)
         curl_easy_cleanup(curl);
         return NULL;
     }
+
+	// CONFIRM HTTP RESPONSE CODE
+	long responseCode;	
+	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &responseCode);
+	printf("CURL: HTTP response code: %ld\n", responseCode);
 	
-	// CONFIRM HEADER AND CODE CHECK
-	// ADD VALIDATOR
-	
+	if (responseCode != 200) {
+		printf("CURL: Request failed with HTTP code: %ld\n", responseCode);
+        if (response.data) free(response.data);
+        curl_easy_cleanup(curl);
+        return NULL;		
+	}
+		
+		
 	if( response.size != MAX_SIZE_DID_PLC) {
 		printf("CURL: Response is not the correct size (32): %ld\n", response.size);
         if (response.data) free(response.data);
@@ -230,9 +218,8 @@ const char *getWellKnownDID (const char *handle)
         return NULL;
     }
 	
-	// Output the received DID
-	printf("CURL: Received DID: %s\n", response.data);
-	printf("CURL: Received DID size: %ld\n", response.size);
+	// OUTPUT THE RECEIVED DID
+	printf("CURL: Received Valid DID: %s\n", response.data);
 
 	DID = strndup(response.data, response.size);
 	if (!DID) {
@@ -242,7 +229,7 @@ const char *getWellKnownDID (const char *handle)
 		return NULL;
 	}
 	
-	// Clean up
+	// CLEAN UP
 	free(response.data); // Free the allocated memory
 	curl_easy_cleanup(curl);
 	return DID;
@@ -320,7 +307,7 @@ const char *buildAbsolutePath (const char *baseDirectory, const char *relativePa
     // Allocate memory for the full path
     size_t totalLength = baseLength + relLength + (needSlash ? 1 : 0) + 1 ; // +1 for '\0'
     char *absolutePath = malloc(totalLength);
-    if (!totalLength) {
+    if (!absolutePath) {
         fprintf(stderr, "Error: Full path memory allocation failed.\n");
         return NULL;
     }
@@ -625,13 +612,13 @@ int databaseGenericSingularQuery (const char *dbPath, const char *sql, const cha
     int rc = sqlite3_step(stmt);
     int result;
     if (rc == SQLITE_ROW) {
-        if (DEBUG_FLAG) printf("DEBUG: Value '%s' is active (isValueInTable)\n", value);
+        if (DEBUG_FLAG) printf("QUERY: Value '%s' is active (DB Query)\n", value);
         result = HANDLE_ACTIVE; // Exists
     } else if (rc == SQLITE_DONE) {
-        if (DEBUG_FLAG) printf("DEBUG: Value '%s' is not active (isValueInTable)\n", value);
+        if (DEBUG_FLAG) printf("QUERY: Value '%s' is not active (DB Query)\n", value);
         result = HANDLE_INACTIVE; // Does not exist
     } else {
-        fprintf(stderr, "Error executing query: %s\n", sqlite3_errmsg(db));
+        fprintf(stderr, "ERROR: Error executing query: %s\n", sqlite3_errmsg(db));
         result = HANDLE_ERROR; // Error
     }
 
@@ -862,7 +849,11 @@ newRecordResult *addNewRecord (const char *handle, const char *label, const char
     // Execute the statement
     int rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) {
-        fprintf(stderr, "ERROR: New record creation failed (%d): %s\n", rc, sqlite3_errmsg(db));
+		if (rc == SQLITE_CONSTRAINT) {
+			newRecord->result = RECORD_ERROR_DUPLICATE_DATA;
+			fprintf(stderr, "ERROR: Duplicate account found, unable to process: %s\n", sqlite3_errmsg(db));
+		}
+        else fprintf(stderr, "ERROR: New record creation failed (%d): %s\n", rc, sqlite3_errmsg(db));
         sqlite3_finalize(stmt);
         sqlite3_close(db);
 		return newRecord;
@@ -1019,7 +1010,7 @@ static enum MHD_Result sendFileResponse (struct MHD_Connection *connection, cons
 	if (contentType != NULL) MHD_add_response_header(response, "Content-Type", contentType);
 
 	// Queue the response
-	if (filename == STATIC_NOTFOUND) ret = MHD_queue_response(connection, MHD_HTTP_NOT_FOUND, response);
+	if (strcmp(filename, STATIC_NOTFOUND) == 0) ret = MHD_queue_response(connection, MHD_HTTP_NOT_FOUND, response);
 	else ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
 
 	// Clean up
@@ -1030,7 +1021,7 @@ static enum MHD_Result sendFileResponse (struct MHD_Connection *connection, cons
 
 // SEND THE RESPONSE TO THE WELL-KNOWN DID PLC METHOD
 // TO DO: CHANGE FROM LABEL/SEGMENT TO FULL HANDLE
-static enum MHD_Result sendWellKnownResponse (struct MHD_Connection *connection, const char *handle)
+static enum MHD_Result sendWellKnownResponse (struct MHD_Connection *connection, const char *handle, const char *label)
 {
 	// QUERY DATABASE FOR *VALID* DID PLC ASSOCIATED WITH 'label'
 	const char *tempDid = queryForDid(handle);
@@ -1057,6 +1048,55 @@ static enum MHD_Result sendWellKnownResponse (struct MHD_Connection *connection,
 		// free((char *)tempDid);
 		return ret; // tempDid FREED BY MHD
 	}
+
+	// THIS IS WHERE THE MIRRORING HAPPENS
+	// *******************************
+
+/*     // Calculate the length of the new string
+    size_t newLength = strlen(handle) + strlen(".bsky.social") + 1;
+
+    // Allocate memory for the new string
+    char *fullURL = malloc(newLength);
+    if (fullURL == NULL) {
+        fprintf(stderr, "Memory allocation failed\n");
+        return MHD_NO;
+    }
+
+    // Concatenate the strings
+    strcpy(fullURL, label);
+    strcat(fullURL, ".bsky.social");
+
+    // Output the result
+    if (DEBUG_FLAG) printf("Full bsky.social label: %s\n", fullURL);
+
+	const char *temp2DID = getWellKnownDID(fullURL);
+	if (temp2DID) {
+		if (DEBUG_FLAG) printf("POST: DID:PLC found via CURL: %s\n", temp2DID);
+
+	     // MHD TAKES OWNERSHIP OF temp2Did AND WILL FREE IT   
+		// response = MHD_create_response_from_buffer (strlen (tempDid), (void *)tempDid, MHD_RESPMEM_MUST_COPY);
+		response = MHD_create_response_from_buffer (strlen (temp2DID), (void *)temp2DID, MHD_RESPMEM_MUST_FREE);
+		if (!response) {
+			free((char *) temp2DID);
+			free((char *) fullURL);
+			return MHD_NO;
+		}
+		// Add text content type header to response
+		MHD_add_response_header( response, MHD_HTTP_HEADER_CONTENT_TYPE, CONTENT_TEXT );
+		// Queue the response
+		ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
+		// Clean up
+		MHD_destroy_response(response);
+		free((char *) fullURL);
+		return ret; // temp2DID FREED BY MHD	
+	} else {
+		if (DEBUG_FLAG) printf("POST: No Valid DID:PLC found via CURL: '%s'\n", temp2DID);
+	}
+	
+    // Free the allocated memory
+    free((char *) fullURL); */
+
+	// *******************************
 
     // HANDLE CASE WHERE DID IS NOT FOUND	
     if (DEBUG_FLAG) printf("DEBUG: DID not found for handle '%s'. Sending 404 response.\n", handle);
@@ -1113,6 +1153,9 @@ static enum MHD_Result sendNewUserResponse (struct MHD_Connection *connection, c
 				break;
 			case RECORD_ERROR_DATABASE:
 				errorMessage = ERROR_DATABASE;
+				break;
+			case RECORD_ERROR_DUPLICATE_DATA:
+				errorMessage = ERROR_DUPLICATE_DATA;
 				break;
 			default:
 				errorMessage = "ERROR: Unknown validation result.";	
@@ -1295,11 +1338,10 @@ static void requestCompleted (void *cls, struct MHD_Connection *connection, void
 		free((char *)con_info->email);
 	}	
 	
-	if (con_info->answerstring) {
-		free((char *)con_info->answerstring);
-	}	
+	// if (con_info->answerstring) {
+		// free((char *)con_info->answerstring);
+	// }	
 
-	
     // Free the structure itself
 	free (con_info);
 	*con_cls = NULL;
@@ -1313,19 +1355,16 @@ static enum MHD_Result requestHandler	   (void *cls, struct MHD_Connection *conn
 												const char *url, const char *method,
 												const char *version, const char *upload_data,
 												size_t *upload_data_size, void **con_cls)
-{
-	printf ("*****************************************************\n");	
-	printf ("REQUEST: New %s request for %s using version %s\n", method, url, version);	
-	
+{	
 	(void) cls;               /* Unused. Silent compiler warning. */
-	//(void) version;           /* Unused. Silent compiler warning. */
+	(void) version;           /* Unused. Silent compiler warning. */
 	
 	if (NULL == *con_cls) { // FIRST CALL, SETUP DATA STRUCTURES, SOME ONLY APPLY TO 'POST' REQUESTS
 	
 		// VALIDATE HOST HEADER. A REVERSE PROXY SHOULD MAKE THIS UNNECESSARY
 		const char *hostHeader = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Host");		
 		if (!hostHeader || (NULL == strcasestr(hostHeader, domainName))) {			
-			printf ("IF CONDITION: invalid host\n"); // TEST
+			// printf ("IF CONDITION: invalid host\n"); // TEST
 			// REJECT REQUEST IF HOST HEADER DOES NOT CONTAIN THE EXPECTED DOMAIN
 			return MHD_NO;
 		}
@@ -1370,7 +1409,7 @@ static enum MHD_Result requestHandler	   (void *cls, struct MHD_Connection *conn
 		}
 
 		// INITIALIZE ANSWER VARIABLES
-		con_info->answerstring = NULL;			// Make sure answer string is empty
+		// con_info->answerstring = NULL;			// Make sure answer string is empty
 
 		*con_cls = (void *) con_info;
 
@@ -1378,6 +1417,9 @@ static enum MHD_Result requestHandler	   (void *cls, struct MHD_Connection *conn
 	}
 
 	struct connectionInfoStruct *con_info = *con_cls;
+
+	printf ("***************************************************************\n");	
+	printf ("REQUEST: New %s request to %s for '%s'\n", method, con_info->host, url);	
 
 	// **************************************
 	// ************ GET REQUESTS ************
@@ -1388,7 +1430,7 @@ static enum MHD_Result requestHandler	   (void *cls, struct MHD_Connection *conn
 		// HANDLE/SUBDOMAIN VERIFICATION NOT NECESSARY
 		if ( 0 == strcasecmp (url, URL_WELL_KNOWN_ATPROTO) )
 		{
-			return sendWellKnownResponse (connection, con_info->host);
+			return sendWellKnownResponse (connection, con_info->host, con_info->handle);
 		}
 		
 		if ( (0 == strcasecmp (url, "/")) && (validateHandle (con_info->handle) ==  KEY_VALID ) ) {
@@ -1405,35 +1447,20 @@ static enum MHD_Result requestHandler	   (void *cls, struct MHD_Connection *conn
 	// ***************************************
 	// ************ POST REQUESTS ************
 	// ***************************************	
-	if (0 == strcasecmp (method, MHD_HTTP_METHOD_POST))	
+	if ( ( 0 == strcasecmp (method, MHD_HTTP_METHOD_POST)) && ( 0 == strcasecmp (url, "/result") ) )
 	{
-		// THIS VALIDATION IS PROBABLY UNNECESSARY SINCE IT IS PRINCIPALLY ABOUT LENGTH
-		// if ( validateHandle (con_info->handle) ==  KEY_INVALID ) {
-			// return sendErrorResponse (connection, ERROR_INVALID_LABEL);	
-		// }
-		
 		if ( 0 != *upload_data_size )
 		{
 			MHD_post_process (con_info->postprocessor, upload_data, *upload_data_size);		
 			*upload_data_size = 0;
 			return MHD_YES;
 		} 
-		
-		if ( con_info->did == NULL ) return sendErrorResponse (connection, "DID or Bluesky handle invalid, try again");
-		
-		
-		if ( con_info->did != NULL && con_info->email != NULL )
-		{
-			return sendNewUserResponse (connection, con_info->host, con_info->handle, con_info->did, con_info->email);
-		}
-		
-		if ( con_info->did != NULL  && con_info->email == NULL )
-		{
-			return sendNewUserResponse (connection, con_info->host, con_info->handle, con_info->did, "NO EMAIL PROVIDED");
-		}
+				
+		if (con_info->did == NULL) return sendErrorResponse (connection, ERROR_INVALID_DID_ENTERED );
 
-		// ALL OTHER POST REQUESTS GET A MHD_NO
-		// return MHD_NO;
+		if (con_info->email == NULL) return sendNewUserResponse(connection, con_info->host, con_info->handle, con_info->did, "NO EMAIL PROVIDED");
+
+		return sendNewUserResponse(connection, con_info->host, con_info->handle, con_info->did, con_info->email);
 	}
 
 	// GENERAL ERROR MESSAGE
@@ -1493,6 +1520,7 @@ int main(int argc, char *argv[])
 	// ************************************
 
 	if ( strcmp( commandArg, "httpd") == 0 ) {
+				
 		#ifdef VERBOSE_FLAG
 		printf("Base directory: %s\n", baseDirectory);
 		printf("Active domain name: %s\n", domainName);
@@ -1522,6 +1550,11 @@ int main(int argc, char *argv[])
 		struct MHD_Daemon *daemon;
 
 		// TO DO, ADD MHD_OPTION_STRICT_FOR_CLIENT OF 1 FOR STRICT HOST DETAILS
+/* 		daemon = MHD_start_daemon (MHD_USE_AUTO | MHD_USE_THREAD_PER_CONNECTION, PORT,
+								 NULL, NULL,  // No client connect/disconnect callbacks
+								 &requestHandler, NULL,  // Request handler
+								 MHD_OPTION_NOTIFY_COMPLETED, requestCompleted,
+								 NULL, MHD_OPTION_END); */
 		daemon = MHD_start_daemon (MHD_USE_AUTO | MHD_USE_INTERNAL_POLLING_THREAD, PORT,
 								 NULL, NULL,  // No client connect/disconnect callbacks
 								 &requestHandler, NULL,  // Request handler
