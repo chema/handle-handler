@@ -17,7 +17,7 @@
 #include "handlerd.h"
 
 #define DEBUG_FLAG 1
-#define VERBOSE_FLAG
+//#define VERBOSE_FLAG
 //#define NGINX_FLAG
 
 #define VERSION "0.2"
@@ -1030,7 +1030,7 @@ static enum MHD_Result sendWellKnownResponse (struct MHD_Connection *connection,
 	
 	if (tempDid != NULL ) { 
 		// CONFIRM DID EXISTS AND SEND IT AS PLAIN TEXT
-       if (DEBUG_FLAG) printf("DEBUG: Found DID for handle '%s': %s\n", handle, tempDid);	
+       if (DEBUG_FLAG) printf("REQUEST: DID found for handle '%s': %s\n", handle, tempDid);	
 	
 	     // MHD TAKES OWNERSHIP OF tempDid AND WILL FREE IT   
 		// response = MHD_create_response_from_buffer (strlen (tempDid), (void *)tempDid, MHD_RESPMEM_MUST_COPY);
@@ -1099,7 +1099,7 @@ static enum MHD_Result sendWellKnownResponse (struct MHD_Connection *connection,
 	// *******************************
 
     // HANDLE CASE WHERE DID IS NOT FOUND	
-    if (DEBUG_FLAG) printf("DEBUG: DID not found for handle '%s'. Sending 404 response.\n", handle);
+    if (DEBUG_FLAG) printf("REQUEST: DID not found for handle '%s', sending HTTP 404\n", handle);
 	
 	response = MHD_create_response_from_buffer (strlen (userNotFoundPage), (void *)userNotFoundPage, MHD_RESPMEM_PERSISTENT);	
 	if (!response) return MHD_NO;
@@ -1228,26 +1228,12 @@ static enum MHD_Result iteratePost	(void *coninfo_cls, enum MHD_ValueKind kind, 
   (void) off;                /* Unused. Silent compiler warning. */
   
 	// THIS KEY IS A GENERAL DID:PLC FIELD WITH EITHER A DID OR A FULL HANDLE. ONLY NEED TO MAKE SURE IT EXISTS AND THAT IT IS <= MAXDIDSIZE
-  	if ( strcmp(key, "did") == 0 ) {
+ 	if ( strcmp(key, "did") == 0 ) {
         printf("POST: DID key value: %s\n", data);
 		
-		// BASIC SIZE SANITY CHECK: (14-254 chars)
-		if (size > 14 && size <= DATA_MAX_SIZE) {
-			printf("POST: Data entered could contain valid DID:PLC or handle: '%s'\n", data);
-
-			if (strcasestr(data, "bsky.social")) {
-				printf("POST: Valid 'bsky.social' handle entered: %s\n", data);		
-				const char *tempDID = getWellKnownDID(data);
-				if (tempDID) {
-					printf("POST: DID:PLC found via CURL: %s\n", tempDID);
-					con_info->did = strndup(tempDID, MAX_SIZE_DID_PLC);
-					free((void *)tempDID);
-					return MHD_YES; // Iterate again looking for email.
-				}
-				printf("POST: No Valid DID:PLC found via CURL: '%s'\n", data);
-				return MHD_NO;
-			}
-
+		// STEP 1: LOOK FOR DID PLC
+		if ( strcasestr(data, "did:plc:") )
+		{
 			char output[MAX_SIZE_DID_PLC + 1] = {0};
 			extractDid(data, output, sizeof(output));
 			if (output[0] != '\0') {
@@ -1255,44 +1241,53 @@ static enum MHD_Result iteratePost	(void *coninfo_cls, enum MHD_ValueKind kind, 
 				con_info->did = strndup(output, strlen(output));
 				return MHD_YES;
 			}
-			printf("POST: No valid DID:PLC or handle found in data: '%s'\n", data);
+		}
+		
+		// STEP 2: LOOK FOR FULL HANDLE
+		if ( strcasestr(data, "bsky.social") ) {
+			printf("POST: Valid 'bsky.social' handle entered: %s\n", data);		
+			const char *tempDID = getWellKnownDID(data);
+			if (tempDID) {
+				printf("POST: Valid DID:PLC found via CURL: %s\n", tempDID);
+				con_info->did = strndup(tempDID, MAX_SIZE_DID_PLC);
+				free((void *)tempDID);
+				return MHD_YES; // Iterate again looking for email.
+			}
+			printf("POST: No Valid DID:PLC found via CURL: '%s'\n", data);
 			return MHD_NO;
 		}
 		
-		
-/* 		// BASIC SIZE SANITY CHECK: (14-254 chars)
-		if ( size > 14 && size <= DATA_MAX_SIZE )
-		{					
-			printf("POST: Data entered could contain valid DID:PLC or handle: '%s'\n", data); 
-			if ( NULL != strcasestr(data, "bsky.social") ) // NOT NULL MEANS data INCLUDES "bsky.social"
-			{
-				const char *tempDID = getWellKnownDID (data);
-				if (tempDID) { // Check if DID is not NULL
-					printf("POST: Received Handle: %s\n", data);
-					printf("POST: CURL Response: %s\n", tempDID);
-					con_info->did = strndup(tempDID, MAX_SIZE_DID_PLC);
-					free((void *)tempDID);
-					return MHD_YES; // Iterate again looking for email.
-				} else
-				{
-					// DO I NEED TO FREE tempDID HERE?
-					printf("POST: No Valid DID:PLC found via CURL: '%s'\n", data);
-					return MHD_NO; // included bsky.social was unable to be resolved into a valid DID.
-				}
-			} else
-			{
-				char output[MAX_SIZE_DID_PLC + 1];
-				extractDid(data, output, sizeof(output));
-				if (output[0] != '\0') {
-					printf("POST: Valid DID:PLC found in data: '%s'\n", output);
-					con_info->did = strndup(output, sizeof(output));
-					return MHD_YES; // Iterate again looking for email.
-				} else {			
-					printf("POST: No Valid DID:PLC found in data: '%s'\n", data); 
-					return MHD_NO;
-				}
+		// STEP 3: CHECK TO SEE IF IT IS A PARTIAL HANDLE BETWEEN 2 and 63 CHARACTERS
+		if (size >= 2 && size <= 63) {
+			printf("POST: Data entered could contain partial handle: '%s'\n", data);
+
+			size_t newLength = size + strlen(".bsky.social") + 1;
+
+			// Allocate memory for the new string
+			char *fullHandle = malloc(newLength);
+			if (fullHandle == NULL) {
+				fprintf(stderr, "POST: Memory allocation failed\n");
+				return MHD_NO;
 			}
-		} */
+
+			// Concatenate strings
+			strcpy(fullHandle, data);
+			strcat(fullHandle, ".bsky.social");
+
+			const char *tempDID = getWellKnownDID(fullHandle);
+			free((void *)fullHandle);
+
+			if (tempDID) {
+				printf("POST: DID:PLC found via CURL: %s\n", tempDID);
+				con_info->did = strndup(tempDID, MAX_SIZE_DID_PLC);
+				free((void *)tempDID);
+				return MHD_YES; // Iterate again looking for email.
+			}
+		}
+			
+		printf("POST: No Valid DID:PLC found via CURL: '%s'\n", data);
+		return MHD_NO;
+
 	}
 
 	if ( (strcmp(key, "email") == 0) && (size <= 256 ) ) {
@@ -1457,7 +1452,7 @@ static enum MHD_Result requestHandler	   (void *cls, struct MHD_Connection *conn
 		} 
 				
 		if (con_info->did == NULL) return sendErrorResponse (connection, ERROR_INVALID_DID_ENTERED );
-
+		
 		if (con_info->email == NULL) return sendNewUserResponse(connection, con_info->host, con_info->handle, con_info->did, "NO EMAIL PROVIDED");
 
 		return sendNewUserResponse(connection, con_info->host, con_info->handle, con_info->did, con_info->email);

@@ -30,7 +30,11 @@ Once you have the wildcard certificates, edit the sample `default-ssl-nginx` con
 
 ## TO DO
 
-* Add automatic forwarding from active handles.
+* Add mirroring options
+* Add multiple domains
+* Improve the NGINX forwarding
+* Improve the CURL requests
+* Add automatic forwarding from active handles (302 temp)
 * Add reverse extraction via lresolv from the full handle
 * Add 15 minute cool down period between changes.
 * Verify locked status of handle.
