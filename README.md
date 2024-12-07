@@ -1,6 +1,6 @@
-# handle-handler: Manage Subdomain Handles for AT Protocol/Bluesky
+# HandleD: Manage Subdomain Handles for AT Protocol/Bluesky
 
-Handle-handler (or `handlerd`) is a lightweight solution for resolving Bluesky handles via the `.well-known` HTTPS route instead of DNS. Designed to be small and simple, `handlerd` uses SQLite, [GNU libmicrohttpd](https://www.gnu.org/software/libmicrohttpd/), and a reverse proxy. While still in early development, it performs well enough for bulk verification using the database.
+HandleD (or `handled`) is a lightweight solution for resolving Bluesky handles via the `.well-known` HTTPS route instead of DNS. Designed to be small and simple, `handled` uses SQLite, [GNU libmicrohttpd](https://www.gnu.org/software/libmicrohttpd/), and a reverse proxy. While still in early development, it performs well enough for bulk verification using the database.
 
 You can easily add handles directly through the web interface. Simply navigate to the subdomain you want to use as your Bluesky handle and enter the DID (without the initial `"did="`). The program performs basic verification of DID and handle formatting. All DIDs are stored in a SQLite database, which can be easily read, exported, and backed up.
 

@@ -1,4 +1,4 @@
-// handle-handler (or handlerd) -  Manage Subdomain Handles for AT Protocol/Bluesky
+// Handled - Manage Subdomain Handles for AT Protocol/Bluesky
 // Copyright (c) 2024 Chema Hernández Gil / AGPL-3.0 license
 // https://github.com/chema/handle-handler
 
@@ -13,8 +13,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <syslog.h>
 
-#include "handlerd.h"
+#include "handled.h"
 
 #define DEBUG_FLAG 1
 //#define VERBOSE_FLAG
@@ -89,17 +90,51 @@ const char *userNotFoundPage = "<html><head></head><body>User not found</body></
 
 int usageDaemon (void)
 {
-	printf("handle-handler (or handlerd) " VERSION " - Manage Subdomain Handles for AT Protocol/Bluesky.\n");
+	printf("HandleD " VERSION " - Manage Subdomain Handles for AT Protocol/Bluesky.\n");
     printf("Copyright (c) 2024 Chema Hernández Gil / AGPL-3.0 license\n");
     printf("\n");
     printf("Commands:\n");
     printf("\n");
-    printf("init {basedir}                      Creates restricted handle database (~/.handlerd is suggested)\n");
+    printf("init {basedir}                      Creates restricted handle database (~/.handled is suggested)\n");
     printf("update {basedir}                    Updates restricted handle database\n");
     printf("httpd {basedir} {domain name}       Starts HTTPD daemon for given domain name\n");
 
+	closelog();
+
     return 1;
 }
+
+// ***************************************************************************
+// END HARD CODED HTML CODE **************************************************
+// ***************************************************************************
+
+
+// ***************************************************************************
+// BEGIN LOGGING *************************************************************
+// ***************************************************************************
+
+
+// HELPER FUNCTION TO LOG ERROR MESSAGE AND HANDLE FAILURE
+int logErrorAndExit(const char *errorMessage) {
+
+
+    fprintf(stderr, "Error: %s.\n", errorMessage);   // LOG TO STDERR
+    syslog(LOG_ERR, "ERROR: %s", errorMessage);      // LOG TO SYSLOG
+    closelog();                                      // CLOSE SYSLOG
+    return 1;                                        // RETURN ERROR CODE
+}
+
+// HELPER FUNCTION TO LOG ERROR MESSAGE AND HANDLE MHD FAILURE
+static enum MHD_Result logMHDError(const char *errorMessage) {
+    if (!errorMessage) {
+        errorMessage = "Unknown error"; // Fallback for null error messages
+    }	
+
+    fprintf(stderr, "Error: %s.\n", errorMessage);   // LOG TO STDERR
+    syslog(LOG_ERR, "ERROR: %s", errorMessage);      // LOG TO SYSLOG
+    return MHD_NO;                                   // RETURN ERROR CODE
+}
+
 
 // ***************************************************************************
 // BEGIN "SECURITY" **********************************************************
@@ -209,7 +244,6 @@ const char *getWellKnownDID (const char *handle)
         curl_easy_cleanup(curl);
         return NULL;		
 	}
-		
 		
 	if( response.size != MAX_SIZE_DID_PLC) {
 		printf("CURL: Response is not the correct size (32): %ld\n", response.size);
@@ -327,33 +361,47 @@ int buildAbsoluteDatabasePaths ()
 {
 	principalDatabaseGlobal = buildAbsolutePath( baseDirectory, PRINCIPAL_DB_FILENAME );
 	if (!principalDatabaseGlobal) {
-		fprintf(stderr, "Memory allocation failure (DB).\n");
-		return 1;
+		return logErrorAndExit ("Error: Memory allocation failure (DB Path)");
 	}
 	
 	filterDatabaseGlobal = buildAbsolutePath( baseDirectory, FILTER_DB_FILENAME );
 	if (!filterDatabaseGlobal) {
-		fprintf(stderr, "Memory allocation failure (DB).\n");
-		return 1;
+		return logErrorAndExit ("Error: Memory allocation failure (DB Path)");
 	}
 	
 	return 0; // Success
 }
 
-// NAIVELY CONFIRM BASE DIRECTORY IS AN ABSOLUTE PATH
-int isAbsolutePath(const char *path) {
-    return path && path[0] == '/';
+// VALIDATE BASE DIRECTORY EXISTS
+static int confirmBaseDirectory(const char *path) {
+    if (!path || path[0] != '/') {
+        return 0; // INVALID OR NON-ABSOLUTE PATH
+    }
+
+	// CONSIDER CHANGING THIS TO ACTUAL READABILITY/WRITABILITY
+    if (access(path, F_OK) != 0) {
+        syslog(LOG_ERR, "Base directory does not exist: %s", path);
+        return 0; // PATH DOES NOT EXIST
+    }
+
+    return 1; // VALID DIRECTORY
 }
+
 
 // FUNCTION TO FREE GLOBAL PATHS (CALLED WHEN PROGRAM EXITS)
-void freeGlobalPaths () {
-	// FREE DATABASE PATH GLOBALS
-	free((char *) principalDatabaseGlobal);
-	principalDatabaseGlobal = NULL;
-	free((char *) filterDatabaseGlobal);
-	filterDatabaseGlobal = NULL;
-}
+void freeGlobalPaths() {
+	syslog(LOG_INFO, "Freeing database paths");	
+    // FREE DATABASE PATH GLOBALS IF THEY ARE ALLOCATED
+    if (principalDatabaseGlobal) {
+        free((char *)principalDatabaseGlobal);
+        principalDatabaseGlobal = NULL;
+    }
 
+    if (filterDatabaseGlobal) {
+        free((char *)filterDatabaseGlobal);
+        filterDatabaseGlobal = NULL;
+    }
+}
 
 // HELPER FUNCTION TO REPLACE PLACEHOLDER_ERROR TEXT IN A STRING
 char* replacePlaceholder(const char *html, const char* placeholder, const char *message)
@@ -408,12 +456,12 @@ int handleRegexError(int ret, regex_t *regex, const char *patternName) {
     char *errorMessage = malloc(errorBufferSize);  // Dynamically allocate memory
 	
     if (!errorMessage) {
-        fprintf(stderr, "Memory allocation error for regex error message buffer.\n");
-        return 1;
+        return logErrorAndExit ("Memory allocation error for regex error message buffer");
     }
 
     regerror(ret, regex, errorMessage, errorBufferSize);  // Populate the error message
-    fprintf(stderr, "Regex compilation error for %s pattern: %s\n", patternName, errorMessage);        
+    fprintf(stderr, "Regex compilation error for %s pattern: %s\n", patternName, errorMessage);
+	syslog(LOG_ERR, "Regex compilation error for %s pattern: %s", patternName, errorMessage);
     free(errorMessage);  // Free allocated memory
     return 1;
 }
@@ -629,7 +677,7 @@ int databaseGenericSingularQuery (const char *dbPath, const char *sql, const cha
 
 
 // ***************************************************************************
-// BEGIN HANDLERD SPECIFIC DATABASE FUNCTIONS ********************************
+// BEGIN HANDLED SPECIFIC DATABASE FUNCTIONS ********************************
 // ***************************************************************************
 
 
@@ -1030,22 +1078,23 @@ static enum MHD_Result sendWellKnownResponse (struct MHD_Connection *connection,
 	
 	if (tempDid != NULL ) { 
 		// CONFIRM DID EXISTS AND SEND IT AS PLAIN TEXT
-       if (DEBUG_FLAG) printf("REQUEST: DID found for handle '%s': %s\n", handle, tempDid);	
-	
-	     // MHD TAKES OWNERSHIP OF tempDid AND WILL FREE IT   
+		if (DEBUG_FLAG) printf("REQUEST: DID found for handle '%s': %s\n", handle, tempDid);	
+
+		// MHD TAKES OWNERSHIP OF tempDid AND WILL FREE IT   
 		// response = MHD_create_response_from_buffer (strlen (tempDid), (void *)tempDid, MHD_RESPMEM_MUST_COPY);
 		response = MHD_create_response_from_buffer (strlen (tempDid), (void *)tempDid, MHD_RESPMEM_MUST_FREE);
 		if (!response) {
 			free((char *)tempDid);
-			return MHD_NO;
+			return logMHDError ("Memory allocation failed for well-known response (DID found)");
 		}
+		// Log response
+		syslog(LOG_INFO, "REQUEST: Responded with valid DID for handle '%s': %s", handle, tempDid);			
 		// Add text content type header to response
 		MHD_add_response_header( response, MHD_HTTP_HEADER_CONTENT_TYPE, CONTENT_TEXT );
 		// Queue the response
 		ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
 		// Clean up
 		MHD_destroy_response(response);
-		// free((char *)tempDid);
 		return ret; // tempDid FREED BY MHD
 	}
 
@@ -1102,7 +1151,9 @@ static enum MHD_Result sendWellKnownResponse (struct MHD_Connection *connection,
     if (DEBUG_FLAG) printf("REQUEST: DID not found for handle '%s', sending HTTP 404\n", handle);
 	
 	response = MHD_create_response_from_buffer (strlen (userNotFoundPage), (void *)userNotFoundPage, MHD_RESPMEM_PERSISTENT);	
-	if (!response) return MHD_NO;
+	if (!response) return logMHDError ("Memory allocation failed for well-known response (DID not found)");
+	// Log response
+	syslog(LOG_INFO, "REQUEST: No DID found for for handle '%s', sending HTTP 404", handle);
 	MHD_add_response_header( response, MHD_HTTP_HEADER_CONTENT_TYPE, CONTENT_HTML );		
 	ret = MHD_queue_response(connection, MHD_HTTP_NOT_FOUND, response);
 	// Clean up
@@ -1254,7 +1305,7 @@ static enum MHD_Result iteratePost	(void *coninfo_cls, enum MHD_ValueKind kind, 
 				return MHD_YES; // Iterate again looking for email.
 			}
 			printf("POST: No Valid DID:PLC found via CURL: '%s'\n", data);
-			return MHD_NO;
+			return logMHDError ("No Valid DID:PLC found via CURL (POST)");
 		}
 		
 		// STEP 3: CHECK TO SEE IF IT IS A PARTIAL HANDLE BETWEEN 2 and 63 CHARACTERS
@@ -1267,7 +1318,7 @@ static enum MHD_Result iteratePost	(void *coninfo_cls, enum MHD_ValueKind kind, 
 			char *fullHandle = malloc(newLength);
 			if (fullHandle == NULL) {
 				fprintf(stderr, "POST: Memory allocation failed\n");
-				return MHD_NO;
+				return logMHDError ("Memory allocation failed (POST)");
 			}
 
 			// Concatenate strings
@@ -1359,17 +1410,16 @@ static enum MHD_Result requestHandler	   (void *cls, struct MHD_Connection *conn
 		// VALIDATE HOST HEADER. A REVERSE PROXY SHOULD MAKE THIS UNNECESSARY
 		const char *hostHeader = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Host");		
 		if (!hostHeader || (NULL == strcasestr(hostHeader, domainName))) {			
-			// printf ("IF CONDITION: invalid host\n"); // TEST
 			// REJECT REQUEST IF HOST HEADER DOES NOT CONTAIN THE EXPECTED DOMAIN
-			return MHD_NO;
+			return logMHDError ("Invalid domain name request rejected");
 		}
 		
 		struct connectionInfoStruct *con_info;
 
 		con_info = malloc (sizeof (struct connectionInfoStruct));
 		if (NULL == con_info) {
-			fprintf(stderr, "Error: Memory allocation failed for connection information.\n");
-			return MHD_NO;	// INTERNAL ERROR
+			// INTERNAL ERROR
+			return logMHDError ("Memory allocation failed for connection information");
 		}
 
 		// DIRECT COPIES OF CONSTANTS, NO NEED TO FREE
@@ -1392,8 +1442,8 @@ static enum MHD_Result requestHandler	   (void *cls, struct MHD_Connection *conn
 			// Creating postprocessor failed, free memory manually and exit.
 			if (NULL == con_info->postprocessor) {
 				free (con_info);
-				fprintf(stderr, "ERROR: Creating postprocessor failed.\n");
-				return MHD_NO; // INTERNAL ERROR
+				// INTERNAL ERROR
+				return logMHDError ("Creating postprocessor failed"); 
 			}
 			
 			con_info->connectiontype = POST;
@@ -1413,8 +1463,8 @@ static enum MHD_Result requestHandler	   (void *cls, struct MHD_Connection *conn
 
 	struct connectionInfoStruct *con_info = *con_cls;
 
-	printf ("***************************************************************\n");	
-	printf ("REQUEST: New %s request to %s for '%s'\n", method, con_info->host, url);	
+	printf ("REQUEST: New %s request to %s for '%s'\n", method, con_info->host, url);
+	syslog(LOG_INFO, "REQUEST: %s request to https://%s%s", method, con_info->host, url);	
 
 	// **************************************
 	// ************ GET REQUESTS ************
@@ -1469,6 +1519,13 @@ static enum MHD_Result requestHandler	   (void *cls, struct MHD_Connection *conn
 
 int main(int argc, char *argv[])
 {	
+    // INITIALIZE SYSTEM LOGGER
+	// MOVE TO LOG_DEAMON AT SOME POINT
+	openlog("handled", LOG_PID | LOG_CONS, LOG_USER);
+	
+    syslog(LOG_INFO, "HandleD %s starting...", VERSION);
+	printf("HandleD %s starting ...\n", VERSION);
+	
 	if ( argc < 3) {
         return usageDaemon();
     }
@@ -1477,16 +1534,16 @@ int main(int argc, char *argv[])
 	baseDirectory = argv[2];  			  // User-provided base directory	
 	domainName = argv[3];
 
-	// CONSTRUCT GLOBAL PATH FILE NAMES. TO FREE AT END
-	int confirmBase = isAbsolutePath(baseDirectory);
-	if ( confirmBase == FALSE ){
-		fprintf(stderr, "Error: Invalid base directory.\n");
-		return 1;
-	}
+	// CONFIRM BASE DIRECTORY EXISTS
+    if ( !confirmBaseDirectory(baseDirectory) ) {
+        return logErrorAndExit("Invalid base directory");
+    }
 	
+	// CONSTRUCT GLOBAL PATH FILE NAMES. MUST BE FREED AT THE END.
 	int DBPaths = buildAbsoluteDatabasePaths();
-	if ( DBPaths == 1) return 1;
-	
+	if ( DBPaths == 1) {
+		return logErrorAndExit ("Unable to build database paths");
+	}
 	
 	// ***************************************	
 	// COMMAND: FILTER DATABASE INITIALIZATION
@@ -1500,13 +1557,16 @@ int main(int argc, char *argv[])
 		rc = initializeFilterDatabase ();
 		
 		if (rc != DATABASE_SUCCESS ) {
-			fprintf(stderr, "Error: Filter Database Failure.\n");
-			return 1;
+			freeGlobalPaths ();
+			return logErrorAndExit ("Failure building reserved word database");
 		}
-				
+
+		printf("Reserved word database built.\n");
+		syslog(LOG_INFO, "Reserved word database built");
+
 		// FREE GLOBALS
 		freeGlobalPaths ();
-	
+		closelog();
 		return 0;
 	}
 
@@ -1519,12 +1579,14 @@ int main(int argc, char *argv[])
 		#ifdef VERBOSE_FLAG
 		printf("Base directory: %s\n", baseDirectory);
 		printf("Active domain name: %s\n", domainName);
+		syslog(LOG_INFO, "Base directory: %s", baseDirectory);
+		syslog(LOG_INFO, "Active domain name: %s", domainName);
 		#endif
 		
 		// COMPILE GLOBAL REGEX	
 		if (compileGlobalRegex() != 0) {
-			fprintf(stderr, "Error compiling global regex\n");
-			return 1;
+			freeGlobalPaths ();
+			return logErrorAndExit ("Unable to compile global regex");
 		}
 		
 		// INITIALIZE THE DATABASE, RETURNS DATABASE_SUCCESS 0 IF SUCESSFUL, DATABASE_ERROR 1 IF IT FAILED.
@@ -1532,14 +1594,18 @@ int main(int argc, char *argv[])
 		rc = initializeUserDatabase ();
 		
 		if (rc != DATABASE_SUCCESS ) {
-			fprintf(stderr, "Error: User Database Failure.\n");
-			return 1;
+			freeGlobalPaths ();
+			return logErrorAndExit ("User database failure");
 		}
 		
 		#ifdef VERBOSE_FLAG
 		printf("User database is active: %s\n", principalDatabaseGlobal);
 		printf("Reserved handle database: %s\n", filterDatabaseGlobal);	
+		syslog(LOG_INFO, "User database is active: %s", principalDatabaseGlobal);
+		syslog(LOG_INFO, "Reserved handle database: %s", filterDatabaseGlobal);
 		#endif
+	
+		printf("Starting Handler Daemon running on port %d.\n", PORT);
 	
 		// START THE HTTP DAEMON
 		struct MHD_Daemon *daemon;
@@ -1557,11 +1623,15 @@ int main(int argc, char *argv[])
 								 NULL, MHD_OPTION_END);
 
 		if (NULL == daemon) {
-			fprintf(stderr, "Failed to start Handler daemon.\n");
-			return 1;
+			// FREE REGEXES
+			freeGlobalRegexes ();
+			// FREE GLOBALS
+			freeGlobalPaths ();
+			return logErrorAndExit ("Failed to start HTTP daemon");
 		}
 
 		printf("Handler Daemon running on port %d. Type 'q' and press Enter to quit.\n", PORT);
+		syslog(LOG_INFO, "Handler Daemon running on port %d. Type 'q' and press Enter to quit", PORT);
 		char input;
 
 		while (1) { // INFINITE LOOP
@@ -1572,6 +1642,9 @@ int main(int argc, char *argv[])
 			}
 		}
 
+		// ENSURE PROPER CLEANUP OF LIBCURL
+		curl_global_cleanup();
+
 		// STOP HTTP DAEMON
 		MHD_stop_daemon (daemon);
 
@@ -1579,12 +1652,18 @@ int main(int argc, char *argv[])
 		freeGlobalRegexes ();
 		// FREE GLOBALS
 		freeGlobalPaths ();
+
+		syslog(LOG_INFO, "HandleD exiting.");
+		closelog();
 		
 		return 0;
 	}
 	
 	// FREE GLOBALS
 	freeGlobalPaths ();
+		
+    syslog(LOG_INFO, "HandleD exiting.");
+    closelog();		
 		
 	return 0;
 }

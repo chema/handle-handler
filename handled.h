@@ -1,5 +1,5 @@
-#ifndef HANDLERD_H
-#define HANDLERD_H
+#ifndef HANDLED_H
+#define HANDLED_H
 
 #include <regex.h>
 #include <microhttpd.h>
@@ -23,7 +23,6 @@
 
 #define CONTENT_TEXT		"text/plain"
 #define CONTENT_HTML		"text/html"
-
 
 
 // DEFINE THE REGULAR EXPRESSION PATTERNS FOR DATA VALIDATION
